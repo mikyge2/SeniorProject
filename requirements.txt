@@ -1,0 +1,21 @@
+# Core libraries
+numpy==1.26.4
+pandas==2.2.2
+
+# Image & video processing
+opencv-python==4.9.0.80
+mediapipe==0.10.14
+
+# Machine learning
+tensorflow==2.16.1
+scikit-learn==1.5.1
+
+# Backend / API
+fastapi==0.111.0
+uvicorn==0.30.1
+
+# Text-to-Speech (for Amharic/English output)
+gTTS==2.5.1
+
+# Utility
+python-multipart==0.0.9
