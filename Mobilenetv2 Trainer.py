@@ -1,140 +1,326 @@
-import numpy as np
-import glob
-import json
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Dropout
-from tensorflow.keras.optimizers import Adam
-from sklearn.metrics import classification_report
-import random
+from tensorflow import keras
+from tensorflow.keras import layers, models, optimizers, callbacks
+import numpy as np
+import json
+import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import classification_report, confusion_matrix
+import logging
+from datetime import datetime
+import glob
+from typing import Dict, List, Tuple, Generator
 
 # ==============================
 # CONFIG
 # ==============================
-BATCH_FILES = sorted(glob.glob("asl_dataset_batch_*.npz"))
-LABELS_FILE = "asl_labels.json"
-EPOCHS_STAGE1 = 3
-EPOCHS_STAGE2 = 3
-BATCH_SIZE = 32
-STEPS_PER_EPOCH = 200
+class Config:
+    BATCH_FILES_PATTERN = "asl_dataset_batch_*.npz"
+    LABELS_FILE = "asl_labels.json"
+    IMG_SIZE = 224
+    NUM_CLASSES = 29
+    MODEL_NAME = "MobileSignLanguage"
+    BATCH_SIZE = 32
+    EPOCHS = 50
+    LEARNING_RATE = 0.001
+    VALIDATION_SPLIT = 0.2
+    TEST_SPLIT = 0.1
+    PREFETCH_BUFFER = 2
+    SHUFFLE_BUFFER = 1000
+    QUANTIZE_MODEL = True
+    TARGET_SIZE_MB = 10
+    USE_MIXED_PRECISION = True
+    EARLY_STOPPING_PATIENCE = 8
+    REDUCE_LR_PATIENCE = 4
+    SAVE_BEST_ONLY = True
+    MODEL_SAVE_DIR = "models"
+    LOGS_DIR = "training_logs"
+    PLOTS_DIR = "plots"
+    MOBILE_EXPORT_DIR = "mobile_models"
+
+config = Config()
+os.makedirs(config.MODEL_SAVE_DIR, exist_ok=True)
+os.makedirs(config.LOGS_DIR, exist_ok=True)
+os.makedirs(config.PLOTS_DIR, exist_ok=True)
+os.makedirs(config.MOBILE_EXPORT_DIR, exist_ok=True)
+
+if config.USE_MIXED_PRECISION:
+    policy = tf.keras.mixed_precision.Policy('mixed_float16')
+    tf.keras.mixed_precision.set_global_policy(policy)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(f'{config.LOGS_DIR}/training_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ==============================
-# Load Labels
+# MEMORY-EFFICIENT DATA LOADER
 # ==============================
-with open(LABELS_FILE, 'r') as f:
-    label_map = json.load(f)
-    label_map = {int(k): v for k, v in label_map.items()}
-NUM_CLASSES = len(label_map)
-print(f"Found {NUM_CLASSES} classes")
+class MemoryEfficientDataLoader:
+    def __init__(self, config: Config):
+        self.config = config
+        self.label_map = self.load_labels()
+        self.num_classes = len(self.label_map)
+        self.batch_files = sorted(glob.glob(self.config.BATCH_FILES_PATTERN))
+        self.dataset_info = self._analyze_dataset()
 
-# ==============================
-# Data Generator (Streaming)
-# ==============================
-def data_generator(batch_files, num_classes, batch_size=32):
-    while True:
-        for batch_file in batch_files:
+    def load_labels(self) -> Dict[int, str]:
+        with open(self.config.LABELS_FILE, 'r') as f:
+            label_map = json.load(f)
+        return {int(k): v for k, v in label_map.items()}
+
+    def _analyze_dataset(self) -> Dict:
+        total_samples = 0
+        class_counts = np.zeros(self.num_classes, dtype=int)
+        if not self.batch_files:
+            raise FileNotFoundError("No batch files found")
+
+        for batch_file in self.batch_files:
             data = np.load(batch_file)
-            X = data["X"]
-            y = tf.keras.utils.to_categorical(data["y"], num_classes)
+            y_batch = data['y']
+            total_samples += len(y_batch)
+            unique, counts = np.unique(y_batch, return_counts=True)
+            for class_idx, count in zip(unique, counts):
+                if class_idx < self.num_classes:
+                    class_counts[class_idx] += count
+            data.close()
 
-            idx = np.arange(len(X))
-            np.random.shuffle(idx)
-            X, y = X[idx], y[idx]
+        test_size = int(total_samples * self.config.TEST_SPLIT)
+        val_size = int(total_samples * self.config.VALIDATION_SPLIT)
+        train_size = total_samples - test_size - val_size
 
-            for i in range(0, len(X), batch_size):
-                yield X[i:i+batch_size], y[i:i+batch_size]
+        return {
+            'total_samples': total_samples,
+            'train_size': train_size,
+            'val_size': val_size,
+            'test_size': test_size,
+            'class_counts': class_counts,
+        }
 
-# Split batch files 80/20 for train/val
-split_idx = int(0.8 * len(BATCH_FILES))
-train_files = BATCH_FILES[:split_idx]
-val_files = BATCH_FILES[split_idx:]
+    def _create_file_index(self) -> List[Tuple[str, int, int]]:
+        file_index = []
+        for batch_file in self.batch_files:
+            data = np.load(batch_file)
+            batch_size = len(data['y'])
+            file_index.append((batch_file, 0, batch_size))
+            data.close()
+        return file_index
 
-VAL_STEPS_FULL = sum([len(np.load(f)["X"]) for f in val_files]) // BATCH_SIZE
-print(f"Validation steps (full pass): {VAL_STEPS_FULL}")
+    def _split_file_index(self, file_index: List[Tuple[str, int, int]]):
+        total_samples = sum(end - start for _, start, end in file_index)
+        test_size = int(total_samples * self.config.TEST_SPLIT)
+        val_size = int(total_samples * self.config.VALIDATION_SPLIT)
+        all_indices = list(range(total_samples))
+        np.random.shuffle(all_indices)
+        test_indices = set(all_indices[:test_size])
+        val_indices = set(all_indices[test_size:test_size + val_size])
+        train_indices = set(all_indices[test_size + val_size:])
+
+        train_files, val_files, test_files = [], [], []
+        current_idx = 0
+        for file_path, start, end in file_index:
+            file_train_indices, file_val_indices, file_test_indices = [], [], []
+            for local_idx in range(start, end):
+                global_idx = current_idx + local_idx
+                if global_idx in train_indices:
+                    file_train_indices.append(local_idx)
+                elif global_idx in val_indices:
+                    file_val_indices.append(local_idx)
+                elif global_idx in test_indices:
+                    file_test_indices.append(local_idx)
+            if file_train_indices:
+                train_files.append((file_path, file_train_indices))
+            if file_val_indices:
+                val_files.append((file_path, file_val_indices))
+            if file_test_indices:
+                test_files.append((file_path, file_test_indices))
+            current_idx += (end - start)
+        return train_files, val_files, test_files
+
+    def _data_generator(self, file_list: List[Tuple[str, List[int]]]) -> Generator:
+        while True:
+            np.random.shuffle(file_list)
+            for file_path, indices in file_list:
+                data = np.load(file_path)
+                X_batch = data['X']
+                y_batch = data['y']
+                shuffled_indices = np.random.permutation(indices)
+                for idx in shuffled_indices:
+                    X_sample = X_batch[idx]
+                    y_sample = y_batch[idx]
+                    y_one_hot = tf.keras.utils.to_categorical(y_sample, self.num_classes)
+                    yield X_sample, y_one_hot
+                data.close()
+
+    def create_datasets(self):
+        file_index = self._create_file_index()
+        train_files, val_files, test_files = self._split_file_index(file_index)
+        train_ds = tf.data.Dataset.from_generator(
+            lambda: self._data_generator(train_files),
+            output_signature=(
+                tf.TensorSpec(shape=(self.config.IMG_SIZE, self.config.IMG_SIZE, 3), dtype=tf.float32),
+                tf.TensorSpec(shape=(self.num_classes,), dtype=tf.float32)
+            )
+        ).batch(self.config.BATCH_SIZE).prefetch(self.config.PREFETCH_BUFFER)
+        val_ds = tf.data.Dataset.from_generator(
+            lambda: self._data_generator(val_files),
+            output_signature=(
+                tf.TensorSpec(shape=(self.config.IMG_SIZE, self.config.IMG_SIZE, 3), dtype=tf.float32),
+                tf.TensorSpec(shape=(self.num_classes,), dtype=tf.float32)
+            )
+        ).batch(self.config.BATCH_SIZE).prefetch(self.config.PREFETCH_BUFFER)
+        test_ds = tf.data.Dataset.from_generator(
+            lambda: self._data_generator(test_files),
+            output_signature=(
+                tf.TensorSpec(shape=(self.config.IMG_SIZE, self.config.IMG_SIZE, 3), dtype=tf.float32),
+                tf.TensorSpec(shape=(self.num_classes,), dtype=tf.float32)
+            )
+        ).batch(self.config.BATCH_SIZE).prefetch(self.config.PREFETCH_BUFFER)
+
+        class_counts = self.dataset_info['class_counts']
+        total_train_val = self.dataset_info['total_samples'] - self.dataset_info['test_size']
+        class_weights = {i: (total_train_val / (self.num_classes * count)) if count > 0 else 1.0 for i, count in enumerate(class_counts)}
+
+        return train_ds, val_ds, test_ds, {
+            'class_weights': class_weights,
+            'label_map': self.label_map,
+            'train_size': self.dataset_info['train_size'],
+            'val_size': self.dataset_info['val_size'],
+            'test_size': self.dataset_info['test_size']
+        }
 
 # ==============================
-# Build Model Function
+# MODEL
 # ==============================
-def build_model(num_classes, trainable_base=False):
-    base_model = MobileNetV2(weights="imagenet", include_top=False, input_shape=(224, 224, 3))
-    base_model.trainable = trainable_base
+class MobileSignLanguageModel:
+    def __init__(self, config: Config, num_classes: int):
+        self.config = config
+        self.num_classes = num_classes
 
-    x = base_model.output
-    x = GlobalAveragePooling2D()(x)
-    x = Dropout(0.3)(x)
-    predictions = Dense(num_classes, activation="softmax")(x)
+    def create_model(self):
+        base_model = tf.keras.applications.MobileNetV3Large(
+            input_shape=(self.config.IMG_SIZE, self.config.IMG_SIZE, 3),
+            alpha=1.0,
+            minimalistic=False,
+            include_top=False,
+            weights='imagenet'
+        )
+        base_model.trainable = False
+        inputs = tf.keras.Input(shape=(self.config.IMG_SIZE, self.config.IMG_SIZE, 3))
+        x = tf.keras.applications.mobilenet_v3.preprocess_input(inputs)
+        x = base_model(x, training=False)
+        x = layers.GlobalAveragePooling2D()(x)
+        x = layers.Dropout(0.3)(x)
+        x = layers.Dense(256, activation='relu')(x)
+        x = layers.Dropout(0.2)(x)
+        outputs = layers.Dense(self.num_classes, activation='softmax', dtype='float32')(x)
+        model = tf.keras.Model(inputs, outputs, name=self.config.MODEL_NAME)
+        return model
 
-    model = Model(inputs=base_model.input, outputs=predictions)
-    return model
-
-# ==============================
-# Stage 1: Train with Frozen Base
-# ==============================
-model = build_model(NUM_CLASSES, trainable_base=False)
-model.compile(optimizer=Adam(learning_rate=0.001), loss="categorical_crossentropy", metrics=["accuracy"])
-
-print("Training stage 1 (frozen base)...")
-model.fit(
-    data_generator(train_files, NUM_CLASSES, BATCH_SIZE),
-    steps_per_epoch=STEPS_PER_EPOCH,
-    validation_data=data_generator(val_files, NUM_CLASSES, BATCH_SIZE),
-    validation_steps=max(1, VAL_STEPS_FULL // 5),
-    epochs=EPOCHS_STAGE1
-)
-
-# ==============================
-# Stage 2: Fine-tune with Partial Unfreezing
-# ==============================
-print("Training stage 2 (fine-tuning)...")
-for layer in model.layers[:-20]:
-    layer.trainable = False
-for layer in model.layers[-20:]:
-    layer.trainable = True
-
-model.compile(optimizer=Adam(learning_rate=1e-5), loss="categorical_crossentropy", metrics=["accuracy"])
-model.fit(
-    data_generator(train_files, NUM_CLASSES, BATCH_SIZE),
-    steps_per_epoch=STEPS_PER_EPOCH,
-    validation_data=data_generator(val_files, NUM_CLASSES, BATCH_SIZE),
-    validation_steps=max(1, VAL_STEPS_FULL // 5),
-    epochs=EPOCHS_STAGE2
-)
+    def compile_model(self, model):
+        model.compile(
+            optimizer=optimizers.Adam(learning_rate=self.config.LEARNING_RATE),
+            loss='categorical_crossentropy',
+            metrics=['accuracy', 'top_k_categorical_accuracy']
+        )
+        return model
 
 # ==============================
-# Final Evaluation (Subset of Validation Batches)
+# TRAINING
 # ==============================
-print("Evaluating on subset of validation batches...")
-val_gen = data_generator(val_files, NUM_CLASSES, BATCH_SIZE)
+class TrainingManager:
+    def __init__(self, config: Config):
+        self.config = config
+        self.history = None
 
-# pick 5 random validation batches to test
-sample_batches = random.sample(val_files, min(5, len(val_files)))
-all_preds, all_labels = [], []
-for batch_file in sample_batches:
-    data = np.load(batch_file)
-    X = data["X"]
-    y = data["y"]
+    def create_callbacks(self, model_name: str):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return [
+            callbacks.ModelCheckpoint(
+                filepath=os.path.join(self.config.MODEL_SAVE_DIR, f'{model_name}_best_{timestamp}.keras'),
+                monitor='val_accuracy',
+                save_best_only=self.config.SAVE_BEST_ONLY,
+                verbose=1
+            ),
+            callbacks.EarlyStopping(monitor='val_accuracy', patience=self.config.EARLY_STOPPING_PATIENCE, restore_best_weights=True, verbose=1),
+            callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=self.config.REDUCE_LR_PATIENCE, min_lr=1e-7, verbose=1),
+            callbacks.TensorBoard(log_dir=os.path.join(self.config.LOGS_DIR, f'{model_name}_{timestamp}'))
+        ]
 
-    preds = model.predict(X, batch_size=BATCH_SIZE, verbose=0)
-    all_preds.append(np.argmax(preds, axis=1))
-    all_labels.append(y)
-
-y_val_pred = np.concatenate(all_preds)
-y_val_true = np.concatenate(all_labels)
-
-print("Classification Report (subset):")
-print(classification_report(y_val_true, y_val_pred, target_names=[label_map[i] for i in range(NUM_CLASSES)]))
+    def train_model(self, model, train_ds, val_ds, class_weights, steps_per_epoch, validation_steps):
+        self.history = model.fit(
+            train_ds,
+            epochs=self.config.EPOCHS,
+            steps_per_epoch=steps_per_epoch,
+            validation_data=val_ds,
+            validation_steps=validation_steps,
+            class_weight=class_weights,
+            callbacks=self.create_callbacks(self.config.MODEL_NAME),
+            verbose=1
+        )
+        return model
 
 # ==============================
-# Export to SavedModel and TFLite
+# EVALUATION
 # ==============================
-saved_model_dir = "asl_mobilenetv2_finetuned_streamval"
-model.export(saved_model_dir)
-print(f"Model exported to {saved_model_dir}")
+class ModelEvaluator:
+    def __init__(self, config: Config, label_map: Dict[int, str]):
+        self.config = config
+        self.label_map = label_map
 
-converter = tf.lite.TFLiteConverter.from_saved_model(saved_model_dir)
-tflite_model = converter.convert()
-with open("asl_mobilenetv2_finetuned_streamval.tflite", "wb") as f:
-    f.write(tflite_model)
+    def evaluate_model(self, model, test_ds, test_steps):
+        results = model.evaluate(test_ds, steps=test_steps, verbose=1)
+        return results
 
-print("TFLite model saved to asl_mobilenetv2_finetuned_streamval.tflite")
+# ==============================
+# MOBILE EXPORT
+# ==============================
+class MobileExporter:
+    def __init__(self, config: Config):
+        self.config = config
+
+    def export_for_mobile(self, model, model_name):
+        tflite_path = os.path.join(self.config.MOBILE_EXPORT_DIR, f'{model_name}.tflite')
+        converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        tflite_model = converter.convert()
+        with open(tflite_path, 'wb') as f:
+            f.write(tflite_model)
+        logger.info(f"Model exported to {tflite_path}")
+
+# ==============================
+# MAIN
+# ==============================
+def main():
+    try:
+        data_loader = MemoryEfficientDataLoader(config)
+        train_ds, val_ds, test_ds, data_info = data_loader.create_datasets()
+        config.NUM_CLASSES = len(data_info['label_map'])
+        steps_per_epoch = max(1, data_info['train_size'] // config.BATCH_SIZE)
+        validation_steps = max(1, data_info['val_size'] // config.BATCH_SIZE)
+        test_steps = max(1, data_info['test_size'] // config.BATCH_SIZE)
+
+        model_builder = MobileSignLanguageModel(config, config.NUM_CLASSES)
+        model = model_builder.create_model()
+        model = model_builder.compile_model(model)
+
+        trainer = TrainingManager(config)
+        model = trainer.train_model(model, train_ds, val_ds, data_info['class_weights'], steps_per_epoch, validation_steps)
+
+        evaluator = ModelEvaluator(config, data_info['label_map'])
+        evaluator.evaluate_model(model, test_ds, test_steps)
+
+        exporter = MobileExporter(config)
+        exporter.export_for_mobile(model, config.MODEL_NAME)
+
+    except Exception as e:
+        logger.error(f"Pipeline failed: {str(e)}")
+
+if __name__ == "__main__":
+    main()
