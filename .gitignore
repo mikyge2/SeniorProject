@@ -1,0 +1,12 @@
+# Ignore TensorFlow records
+processed_asl/*.tfrecord
+
+# Ignore virtual environments
+.venv/
+.venv1/
+
+# Ignore PyCharm project files
+.idea/
+
+# Ignore system files
+*.log
