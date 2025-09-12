@@ -6,7 +6,6 @@ A memory-efficient, modular trainer for sign language classification using
 MobileNetV2 + hand landmarks architecture. Supports both alphabet (static images)
 and word (sequence) datasets through TFRecord format.
 
-Author: Claude AI
 Date: September 2025
 """
 
