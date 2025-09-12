@@ -6,6 +6,7 @@ on a TFLite model that expects both image and landmark inputs.
 """
 
 import argparse
+import json
 import sys
 import os
 from typing import Optional, Tuple
@@ -198,37 +199,9 @@ def run_inference(interpreter: tf.lite.Interpreter, image_input: np.ndarray,
 
 
 def main():
-    class_labels = {
-        0: "A",
-        1: "B",
-        2: "C",
-        3: "D",
-        4: "E",
-        5: "F",
-        6: "G",
-        7: "H",
-        8: "I",
-        9: "J",
-        10: "K",
-        11: "L",
-        12: "M",
-        13: "N",
-        14: "O",
-        15: "P",
-        16: "Q",
-        17: "R",
-        18: "S",
-        19: "T",
-        20: "U",
-        21: "V",
-        22: "W",
-        23: "X",
-        24: "Y",
-        25: "Z",
-        26: "del",
-        27: "nothing",
-        28: "space"
-    }
+    with open("processed_asl/metadata.json") as f:
+        metadata = json.load(f)
+    class_labels = {v: k for k, v in metadata["classes"].items()}
     parser = argparse.ArgumentParser(description='Run inference on hand gesture recognition model')
     parser.add_argument('--image', required=True, help='Path to input image')
     parser.add_argument('--model', default='export/asl_model.tflite',
