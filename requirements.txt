@@ -19,3 +19,6 @@ gTTS==2.5.1
 
 # Utility
 python-multipart==0.0.9
+
+#texttoSpeach
+pyttsx3==2.90

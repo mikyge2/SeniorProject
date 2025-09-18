@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
-Production-Grade Sign Language Dataset Preprocessor
+Sign Language Dataset Preprocessor
 
-A universal, memory-efficient preprocessor for both alphabet (static images)
-and word (video) datasets. Outputs TFRecords with hand landmarks and preprocessed images.
+A preprocessor for both alphabet (static images) and word (video) datasets.
+Outputs TFRecords with hand landmarks and preprocessed images.
 
-Author: Claude
-License: MIT
 """
 
 import os
