@@ -6,7 +6,6 @@ Real-time ASL inference script using TensorFlow Lite model with dual inputs:
 
 Compatible with Python 3.12, TensorFlow Lite, OpenCV, and MediaPipe.
 """
-
 import argparse
 import json
 import sys
