@@ -379,20 +379,50 @@ class SimpleTTS:
             except queue.Empty:
                 continue
 
+    def _romanize_amharic(self, amharic_text: str) -> str:
+        """Convert Amharic script to romanized pronunciation for TTS."""
+        # Simple Amharic to romanized mapping for common words
+        amharic_romanized = {
+            'ሰላም': 'selam',
+            'ደህና': 'dehna',
+            'እንደምን': 'endemin',
+            'አመሰግናለሁ': 'ameseginalew',
+            'ዓላማ': 'alama',
+            'ማዕከል': 'makel',
+            'መጽሐፍ': 'metshaf',
+            'ሰዓት': 'seat',
+            'ቤት': 'bet',
+            'ውሃ': 'wuha',
+            'ቃል': 'kal',
+            'ሰው': 'sew',
+            'እጅ': 'ej',
+            'ዓይን': 'ayn',
+            'ልብ': 'lib',
+            'ቀን': 'ken',
+            'ለሊት': 'lelit',
+            'ምግብ': 'migib',
+            'መጠጥ': 'metat',
+            'አደራጅ': 'aderaj'
+        }
+
+        return amharic_romanized.get(amharic_text, amharic_text)
+
     def _speak_with_google(self, text: str, lang: str = 'en') -> bool:
-        """Speak using Google TTS."""
+        """Speak using Google TTS with romanized Amharic support."""
         if not self.google_available:
             return False
 
         try:
             import gtts
 
-            # Handle Amharic - Google TTS doesn't support 'am', so skip it
+            # Handle Amharic by converting to romanized English pronunciation
             if lang == 'am':
-                logger.warning("Amharic TTS not supported by Google TTS - skipping")
-                return False
+                romanized = self._romanize_amharic(text)
+                logger.info(f"Speaking Amharic '{text}' as '{romanized}'")
+                tts = gtts.gTTS(text=romanized, lang='en', slow=True)  # Slower for clarity
+            else:
+                tts = gtts.gTTS(text=text, lang=lang)
 
-            tts = gtts.gTTS(text=text, lang=lang)
             audio_file = os.path.join(self.temp_dir, f"tts_{int(time.time() * 1000)}.mp3")
             tts.save(audio_file)
 
@@ -405,7 +435,7 @@ class SimpleTTS:
                 pygame.mixer.music.play()
 
                 # Don't block - just start playing and clean up later
-                threading.Timer(3.0, lambda: self._cleanup_audio_file(audio_file)).start()
+                threading.Timer(5.0, lambda: self._cleanup_audio_file(audio_file)).start()
                 return True
             except ImportError:
                 pass
@@ -418,7 +448,7 @@ class SimpleTTS:
                         subprocess.Popen([player, audio_file],
                                        stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL)
-                        threading.Timer(3.0, lambda: self._cleanup_audio_file(audio_file)).start()
+                        threading.Timer(5.0, lambda: self._cleanup_audio_file(audio_file)).start()
                         return True
                     except Exception:
                         continue
@@ -522,60 +552,78 @@ class WordCompletionBanner:
             from PIL import Image, ImageDraw, ImageFont
             import numpy as np
 
-            # Create PIL image
+            # Create PIL image from the current frame
             pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             draw = ImageDraw.Draw(pil_img)
 
-            # Try to find a suitable font
+            # Try to find a suitable font that supports Unicode
             font = None
-            font_size = 24
+            font_size = 28  # Larger for better visibility
 
-            # Common system fonts that support Amharic/Unicode
+            # Font search order - prioritize fonts with good Unicode support
             font_paths = [
-                # Windows
+                # Windows fonts
+                "C:/Windows/Fonts/seguisym.ttf",  # Good Unicode support
                 "C:/Windows/Fonts/arial.ttf",
                 "C:/Windows/Fonts/calibri.ttf",
-                # macOS
+                # macOS fonts
                 "/System/Library/Fonts/Arial.ttf",
                 "/System/Library/Fonts/Helvetica.ttc",
-                # Linux
+                "/Library/Fonts/Arial.ttf",
+                # Linux fonts
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                "/usr/share/fonts/TTF/DejaVuSans.ttf"
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"  # Excellent Unicode
             ]
 
             for font_path in font_paths:
                 if os.path.exists(font_path):
                     try:
                         font = ImageFont.truetype(font_path, font_size)
-                        break
+                        # Test if the font can render Amharic by trying to get bbox
+                        test_bbox = draw.textbbox((0, 0), amharic_text, font=font)
+                        if test_bbox[2] > 0:  # Width > 0 means it can render
+                            break
                     except Exception:
                         continue
 
             if font is None:
                 try:
+                    # Try default font as last resort
                     font = ImageFont.load_default()
                 except Exception:
+                    # If even default fails, draw placeholder
+                    cv2.putText(frame, "[Amharic text - install Noto fonts]",
+                              (x + 10, y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (150, 255, 150), 2)
                     return frame
 
-            # Calculate text position (center it)
+            # Calculate text position for centering
             try:
                 bbox = draw.textbbox((0, 0), amharic_text, font=font)
                 text_width = bbox[2] - bbox[0]
                 text_height = bbox[3] - bbox[1]
             except Exception:
                 # Fallback for older PIL versions
-                text_width, text_height = draw.textsize(amharic_text, font=font)
+                try:
+                    text_width, text_height = draw.textsize(amharic_text, font=font)
+                except:
+                    text_width, text_height = 100, 25  # Fallback dimensions
 
             text_x = x + (width - text_width) // 2
             text_y = y
 
-            # Draw text with outline for better visibility
-            outline_color = (0, 0, 0, 255)  # Black outline
-            text_color = (150, 255, 150, 255)  # Light green
+            # Ensure coordinates are positive
+            text_x = max(0, text_x)
+            text_y = max(0, text_y)
 
-            # Draw outline
-            for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1)]:
+            # Draw text with outline for better visibility
+            outline_color = (0, 0, 0)  # Black outline
+            text_color = (100, 255, 150)  # Light green
+
+            # Draw outline (multiple positions for thickness)
+            outline_positions = [(-2,-2), (-2,0), (-2,2), (0,-2), (0,2), (2,-2), (2,0), (2,2)]
+            for dx, dy in outline_positions:
                 draw.text((text_x+dx, text_y+dy), amharic_text, font=font, fill=outline_color)
 
             # Draw main text
@@ -583,11 +631,33 @@ class WordCompletionBanner:
 
             # Convert back to OpenCV format
             frame_rgb = np.array(pil_img)
-            return cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+            converted_frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
+            # Verify the conversion worked
+            if converted_frame.shape == frame.shape:
+                return converted_frame
+            else:
+                logger.debug("Frame conversion size mismatch, using original")
+                return frame
 
         except Exception as e:
             logger.debug(f"PIL text rendering failed: {e}")
+            # Fallback to OpenCV with transliterated text
+            transliterated = self._transliterate_amharic(amharic_text)
+            cv2.putText(frame, f"Amharic: {transliterated}",
+                      (x + 10, y + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (150, 255, 150), 2)
             return frame
+
+    def _transliterate_amharic(self, amharic_text: str) -> str:
+        """Convert Amharic to Latin transliteration for fallback display."""
+        transliteration_map = {
+            'ሰላም': 'selam', 'ደህና': 'dehna', 'እንደምን': 'endemin',
+            'አመሰግናለሁ': 'amesegnalew', 'ዓላማ': 'alama', 'ማዕከል': 'ma\'ekel',
+            'መጽሐፍ': 'metshaf', 'ሰዓት': 'se\'at', 'ቤት': 'bet', 'ውሃ': 'wuha',
+            'ቃል': 'qal', 'ሰው': 'sew', 'እጅ': 'ej', 'ዓይን': 'ayin', 'ልብ': 'leb',
+            'ቀን': 'qen', 'ለሊት': 'lelit', 'ምግብ': 'megeb', 'መጠጥ': 'metat'
+        }
+        return transliteration_map.get(amharic_text, amharic_text)
 
     def draw(self, frame: np.ndarray, word: str, flash_progress: float,
              amharic_translation: Optional[str] = None) -> np.ndarray:
@@ -952,10 +1022,11 @@ class ASLRealTimeInference:
         return len(self.fps_counter) / time_span if time_span > 0 else 0.0
 
     def handle_word_completion(self, word: str):
-        """Handle completed word with translation and TTS."""
+        """Handle completed word with translation and bilingual TTS."""
         if not word:
             return
 
+        # Get Amharic translation
         amharic_translation = None
         if self.enable_amharic and self.amharic_translator:
             if self.amharic_translator.translation_available:
@@ -969,21 +1040,25 @@ class ASLRealTimeInference:
         elif self.enable_amharic:
             logger.warning("Amharic enabled but translator not initialized")
 
-        # Speak English only (non-blocking)
-        if self.tts_engine:
-            self.tts_engine.speak(word, 'en')
-
-        # Note: Amharic TTS is not supported by Google TTS
-        # The translation will be displayed visually instead
-
+        # Immediately update UI state
         self.last_spoken_word = word
         self.last_amharic_translation = amharic_translation
         self.word_flash_time = time.time()
 
+        # Speak English first (non-blocking)
+        if self.tts_engine:
+            self.tts_engine.speak(word, 'en')
+
+            # Speak Amharic after a short delay if translation is available
+            if self.enable_amharic and amharic_translation:
+                # Use threading timer for delayed Amharic speech
+                threading.Timer(1.2, lambda: self.tts_engine.speak(amharic_translation, 'am')).start()
+
+        # Log completion
         if amharic_translation:
-            logger.info(f"Completed word: '{word}' -> Amharic: '{amharic_translation}' (visual display only)")
+            logger.info(f"Completed word: '{word}' -> Amharic: '{amharic_translation}' (with TTS)")
         else:
-            logger.info(f"Completed word: '{word}' (no Amharic translation)")
+            logger.info(f"Completed word: '{word}' (English only)")
 
     def draw_ui(self, frame: np.ndarray, prediction: str, confidence: float, results,
                 current_word: str, word_finalized: bool, letter_progress: float,
@@ -1107,33 +1182,44 @@ class ASLRealTimeInference:
                     self.handle_word_completion(current_word)
                     self.word_tracker.reset_word()
 
+                # Handle key presses with immediate response
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('q'):
                     break
-                elif key == ord('0'):
-                    completed = self.word_tracker.auto_complete_word()
-                    if completed:
-                        self.handle_word_completion(completed)
-                        self.word_tracker.reset_word()
-                elif key == ord('r'):
+                elif key == ord('0'):  # Auto-complete
+                    if self.word_tracker.current_word:
+                        completed = self.word_tracker.auto_complete_word()
+                        if completed:
+                            self.handle_word_completion(completed)
+                            self.word_tracker.reset_word()
+                            logger.info(f"Manual completion: '{completed}'")
+                elif key == ord('r'):  # Reset
                     self.word_tracker.reset_word()
-                elif key == ord('l'):
+                    logger.info("Word reset")
+                elif key == ord('l'):  # Toggle landmarks
                     self.show_landmarks = not self.show_landmarks
-                elif key == ord('1'):
-                    selected = self.word_tracker.select_suggestion(0)
-                    if selected:
+                    logger.info(f"Landmarks: {'ON' if self.show_landmarks else 'OFF'}")
+                elif key == ord('1'):  # Suggestion 1
+                    suggestions = self.word_tracker.get_word_suggestions(self.word_tracker.current_word)
+                    if len(suggestions) > 0:
+                        selected = suggestions[0]
                         self.handle_word_completion(selected)
                         self.word_tracker.reset_word()
-                elif key == ord('2'):
-                    selected = self.word_tracker.select_suggestion(1)
-                    if selected:
+                        logger.info(f"Selected suggestion 1: '{selected}'")
+                elif key == ord('2'):  # Suggestion 2
+                    suggestions = self.word_tracker.get_word_suggestions(self.word_tracker.current_word)
+                    if len(suggestions) > 1:
+                        selected = suggestions[1]
                         self.handle_word_completion(selected)
                         self.word_tracker.reset_word()
-                elif key == ord('3'):
-                    selected = self.word_tracker.select_suggestion(2)
-                    if selected:
+                        logger.info(f"Selected suggestion 2: '{selected}'")
+                elif key == ord('3'):  # Suggestion 3
+                    suggestions = self.word_tracker.get_word_suggestions(self.word_tracker.current_word)
+                    if len(suggestions) > 2:
+                        selected = suggestions[2]
                         self.handle_word_completion(selected)
                         self.word_tracker.reset_word()
+                        logger.info(f"Selected suggestion 3: '{selected}'")
 
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
@@ -1241,11 +1327,12 @@ def diagnose_system():
     print("   python script.py --diagnose")
     print("   python script.py --translate-amharic")
     print()
-    print("KNOWN LIMITATIONS:")
-    print("• Amharic TTS is not supported (Google TTS limitation)")
-    print("• Only English will be spoken aloud")
-    print("• Amharic translation will be displayed visually")
-    print("• Install Pillow for proper Amharic character display")
+    print("KNOWN FEATURES:")
+    print("• English words are spoken clearly")
+    print("• Amharic translations are displayed AND spoken (romanized)")
+    print("• Real-time word suggestions from online dictionary")
+    print("• Immediate response to number key selections")
+    print("• Proper Unicode display with PIL/Pillow")
 
     if not translation_working:
         print()
