@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # Response models
 class PredictionResponse(BaseModel):
+    """Defines the structure of a single prediction response."""
     letter: str
     confidence: float
     current_word: str
@@ -47,20 +48,41 @@ class PredictionResponse(BaseModel):
     timestamp: str
 
 class HealthResponse(BaseModel):
+    """Defines the structure of the health check response."""
     status: str
     model_loaded: bool
     timestamp: str
     connections: int
 
 class ResetResponse(BaseModel):
+    """Defines the structure of the word tracker reset response."""
     status: str
     message: str
 
 
 class ASLInferenceEngine:
-    """Headless ASL inference engine for API use."""
+    """A wrapper for the ASL inference system, adapted for a headless API environment.
+
+    This class loads the ASL model and all related components (MediaPipe,
+    translator, TTS) and provides a single method to process raw image frames.
+    It is designed to be instantiated once at server startup.
+
+    Attributes:
+        model_path (str): The file path to the TFLite model.
+        metadata_path (str): The file path to the class metadata JSON.
+        enable_amharic (bool): Flag to enable Amharic translation.
+        inference_system (ASLRealTimeInference): The core inference logic instance.
+        amharic_translator (Optional[SimpleAmharicTranslator]): The translator instance.
+    """
 
     def __init__(self, model_path: str, metadata_path: str, enable_amharic: bool = True):
+        """Initializes and loads the entire ASL inference pipeline.
+
+        Args:
+            model_path: The path to the TFLite model file.
+            metadata_path: The path to the metadata JSON file.
+            enable_amharic: Whether to enable Amharic translation features.
+        """
         self.model_path = model_path
         self.metadata_path = metadata_path
         self.enable_amharic = enable_amharic
@@ -86,7 +108,7 @@ class ASLInferenceEngine:
             logger.info(f"Amharic translation: {'Available' if self.amharic_translator.translation_available else 'Not available'}")
 
     def _initialize_system(self):
-        """Initialize the inference system components."""
+        """Loads the model, metadata, and initializes MediaPipe."""
         try:
             # Load model and metadata
             self.inference_system.load_model()
@@ -102,15 +124,21 @@ class ASLInferenceEngine:
             raise
 
     def process_frame(self, frame_data: bytes, word_tracker: WordTracker) -> Dict[str, Any]:
-        """
-        Process a single frame and return prediction results.
+        """Processes a single image frame to perform ASL recognition.
+
+        This method takes raw image bytes, decodes them, runs the full
+        MediaPipe and TensorFlow Lite inference pipeline, updates the state
+        of the provided `WordTracker`, and returns a dictionary of results.
 
         Args:
-            frame_data: Raw image bytes
-            word_tracker: WordTracker instance for this connection
+            frame_data: The raw byte content of the image file (e.g., JPEG, PNG).
+            word_tracker: The stateful `WordTracker` instance for the current
+                user/connection.
 
         Returns:
-            Dictionary with prediction results
+            A dictionary containing the prediction results, including the
+            detected letter, confidence, current word, and translation if a
+            word was completed.
         """
         try:
             # Decode image from bytes
@@ -196,7 +224,16 @@ class ASLInferenceEngine:
             }
 
     def _handle_word_completion_with_tts(self, word: str, amharic_translation: Optional[str]):
-        """Handle word completion with TTS for both English and Amharic."""
+        """Triggers Text-to-Speech (TTS) for a completed word and its translation.
+
+        This method is designed to be non-blocking. It queues the English word
+        for immediate speech and schedules the Amharic translation to be spoken
+        after a short delay.
+
+        Args:
+            word: The completed English word.
+            amharic_translation: The Amharic translation of the word, if available.
+        """
         try:
             # Use the original inference system's TTS if available
             if hasattr(self.inference_system, 'tts_engine') and self.inference_system.tts_engine:
@@ -219,13 +256,34 @@ class ASLInferenceEngine:
 
 
 class ConnectionManager:
-    """Manage WebSocket connections and their word trackers."""
+    """Manages active WebSocket connections and their associated user states.
+
+    This class acts as a central registry for all connected clients. It assigns
+    a unique ID to each connection and maintains a separate `WordTracker`
+    instance for each, ensuring that users' word-building states are isolated.
+
+    Attributes:
+        active_connections: A dictionary mapping unique connection IDs to a
+            dict containing the WebSocket object and the user's `WordTracker`.
+    """
 
     def __init__(self):
+        """Initializes the ConnectionManager."""
         self.active_connections: Dict[str, Dict[str, Any]] = {}
 
     async def connect(self, websocket: WebSocket) -> str:
-        """Accept new WebSocket connection and create word tracker."""
+        """Accepts a new WebSocket connection and prepares its state.
+
+        This method accepts the connection, generates a unique ID, creates a
+        new `WordTracker` for the connection, and stores it in the active
+        connections registry.
+
+        Args:
+            websocket: The incoming `fastapi.WebSocket` object.
+
+        Returns:
+            The unique connection ID string for the new connection.
+        """
         await websocket.accept()
 
         connection_id = str(uuid.uuid4())
@@ -247,21 +305,45 @@ class ConnectionManager:
         return connection_id
 
     def disconnect(self, connection_id: str):
-        """Remove connection and clean up resources."""
+        """Removes a connection from the registry upon disconnection.
+
+        Args:
+            connection_id: The unique ID of the connection to remove.
+        """
         if connection_id in self.active_connections:
             del self.active_connections[connection_id]
             logger.info(f"WebSocket disconnected: {connection_id}")
 
     def get_connection(self, connection_id: str) -> Optional[Dict[str, Any]]:
-        """Get connection data by ID."""
+        """Retrieves the data associated with a specific connection ID.
+
+        Args:
+            connection_id: The ID of the connection to retrieve.
+
+        Returns:
+            A dictionary containing the connection's data (including its
+            `WordTracker`), or None if the ID is not found.
+        """
         return self.active_connections.get(connection_id)
 
     def get_connection_count(self) -> int:
-        """Get number of active connections."""
+        """Returns the current number of active WebSocket connections.
+
+        Returns:
+            The total count of active connections.
+        """
         return len(self.active_connections)
 
     def reset_word_tracker(self, connection_id: str) -> bool:
-        """Reset word tracker for a connection."""
+        """Resets the `WordTracker` for a specific connection.
+
+        Args:
+            connection_id: The ID of the connection whose tracker should be reset.
+
+        Returns:
+            True if the tracker was successfully reset, False if the
+            connection ID was not found.
+        """
         if connection_id in self.active_connections:
             self.active_connections[connection_id]["word_tracker"].reset_word()
             logger.info(f"Word tracker reset for connection: {connection_id}")
@@ -291,7 +373,16 @@ connection_manager = ConnectionManager()
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the ASL inference engine on startup."""
+    """Initializes the ASLInferenceEngine when the FastAPI application starts.
+
+    This event handler ensures that the model and all necessary components are
+    loaded into memory once, before any requests are served. This avoids the
+
+    overhead of loading the model on each request.
+
+    Raises:
+        FileNotFoundError: If the model or metadata files are not found.
+    """
     global inference_engine
 
     # Configure paths (adjust as needed)
@@ -344,7 +435,13 @@ async def startup_event():
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint."""
+    """Provides a health check endpoint for monitoring the service.
+
+    Returns:
+        A `HealthResponse` object indicating the server's status, whether the
+        model is loaded, the current timestamp, and the number of active
+        connections.
+    """
     return HealthResponse(
         status="healthy" if inference_engine is not None else "unhealthy",
         model_loaded=inference_engine is not None,
@@ -355,7 +452,17 @@ async def health_check():
 
 @app.post("/reset/{connection_id}", response_model=ResetResponse)
 async def reset_connection(connection_id: str):
-    """Reset word tracker for a specific connection."""
+    """Resets the word tracker state for a specific connection ID.
+
+    This allows a client to clear the current word being formed without
+    disconnecting.
+
+    Args:
+        connection_id: The unique ID of the connection.
+
+    Returns:
+        A `ResetResponse` indicating success or failure.
+    """
     if connection_manager.reset_word_tracker(connection_id):
         return ResetResponse(
             status="success",
@@ -373,9 +480,19 @@ async def predict_rest(
     file: UploadFile = File(...),
     connection_id: Optional[str] = None
 ):
-    """
-    REST endpoint for frame prediction (fallback option).
-    Requires multipart/form-data with image file.
+    """Provides a REST endpoint for single-frame predictions.
+
+    This endpoint serves as a fallback or for use cases where WebSockets are
+    not suitable. It accepts an image file and an optional `connection_id` to
+    maintain state across calls.
+
+    Args:
+        file: An uploaded image file.
+        connection_id: An optional string to identify a user session. If provided,
+            the server will use the associated `WordTracker`.
+
+    Returns:
+        A `PredictionResponse` with the inference results.
     """
     if inference_engine is None:
         raise HTTPException(status_code=503, detail="Inference engine not initialized")
@@ -408,30 +525,25 @@ async def predict_rest(
 
 @app.websocket("/ws/predict")
 async def websocket_predict(websocket: WebSocket):
-    """
-    WebSocket endpoint for continuous frame processing.
+    """Handles real-time, stateful ASL recognition over a WebSocket connection.
 
-    Expected message format:
-    {
-        "type": "frame",
-        "data": "base64_encoded_image_data"
-    }
+    This is the primary endpoint for mobile applications. It establishes a
+    persistent connection, allowing a client to stream frames (as base64-encoded
+    strings) and receive immediate feedback. The server maintains a unique
+    `WordTracker` for each connection.
 
-    Response format:
-    {
-        "type": "prediction",
-        "data": {
-            "letter": "H",
-            "confidence": 0.94,
-            "current_word": "HE",
-            "word_suggestions": ["HELLO", "HELP"],
-            "word_finalized": false,
-            "word_completed": null,
-            "amharic_translation": null,
-            "letter_progress": 0.75,
-            "timestamp": "2023-..."
-        }
-    }
+    **Client-to-Server Message Types:**
+    - `{"type": "frame", "data": "..."}`: Sends a base64 image for processing.
+    - `{"type": "reset"}`: Resets the word tracker for the connection.
+    - `{"type": "config", "data": {"hold_time": 0.8}}`: (Example) Adjusts settings.
+
+    **Server-to-Client Message Types:**
+    - `{"type": "prediction", "data": {...}}`: The main prediction result.
+    - `{"type": "error", "message": "..."}`: Sent when an error occurs.
+    - `{"type": "reset_confirmed"}`: Confirms that the word tracker was reset.
+
+    Args:
+        websocket: The `fastapi.WebSocket` object for the connection.
     """
     if inference_engine is None:
         await websocket.close(code=1013, reason="Inference engine not initialized")
@@ -560,7 +672,11 @@ async def websocket_predict(websocket: WebSocket):
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information."""
+    """Provides a simple root endpoint with basic API information.
+
+    Returns:
+        A JSON object with a welcome message and a list of available endpoints.
+    """
     return {
         "message": "ASL Recognition API",
         "version": "1.0.0",

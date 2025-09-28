@@ -31,15 +31,30 @@ logger = logging.getLogger(__name__)
 
 
 class OnlineDictionaryAPI:
-    """Online dictionary API for word suggestions."""
+    """Provides word suggestions by querying an online dictionary API.
+
+    This class handles fetching word suggestions for partially completed words.
+    It includes a caching mechanism to reduce redundant API calls and a
+    fallback list of common words if the API is unavailable.
+
+    Attributes:
+        api_available (bool): True if the online dictionary API is accessible.
+        cache (Dict[str, List[str]]): A cache to store API results.
+        cache_max_size (int): The maximum number of items to store in the cache.
+    """
 
     def __init__(self):
+        """Initializes the OnlineDictionaryAPI and tests API availability."""
         self.api_available = self._test_api()
         self.cache = {}
         self.cache_max_size = 200
 
     def _test_api(self) -> bool:
-        """Test if online dictionary API is accessible."""
+        """Tests the availability of the Datamuse online dictionary API.
+
+        Returns:
+            True if the API responds successfully, False otherwise.
+        """
         try:
             import requests
             response = requests.get(
@@ -56,7 +71,19 @@ class OnlineDictionaryAPI:
         return False
 
     def get_word_suggestions(self, partial_word: str, max_suggestions: int = 3) -> List[str]:
-        """Get word suggestions from online dictionary API."""
+        """Fetches word suggestions for a given partial word.
+
+        Queries the Datamuse API for words starting with `partial_word`.
+        Results are cached. If the API is down or returns no results, a
+        fallback list of common English words is used.
+
+        Args:
+            partial_word: The partially spelled word to get suggestions for.
+            max_suggestions: The maximum number of suggestions to return.
+
+        Returns:
+            A list of suggested words, or an empty list if none are found.
+        """
         if not partial_word or len(partial_word) < 2:
             return []
 
@@ -125,10 +152,35 @@ class OnlineDictionaryAPI:
 
 
 class WordTracker:
-    """Enhanced word tracker with online dictionary suggestions."""
+    """Tracks the sequence of letters to form words based on predictions.
+
+    This class manages the logic for building words from a stream of individual
+    letter predictions. It uses a sliding window to determine a "stable" letter,
+    requires a letter to be held for a minimum duration before being appended
+    to the current word, and finalizes words after a pause in confident
+    predictions.
+
+    Attributes:
+        window_size (int): The number of recent predictions to consider for stability.
+        confidence_threshold (float): The minimum confidence for a prediction to be considered valid.
+        pause_threshold (float): The duration of inactivity (in seconds) to finalize a word.
+        min_letter_duration (float): The time a stable letter must be held before being added to the word.
+        prediction_buffer (deque): A buffer holding recent predictions.
+        current_word (str): The word currently being formed.
+        current_letter (str): The stable letter currently being held.
+        dictionary (OnlineDictionaryAPI): An instance for fetching word suggestions.
+    """
 
     def __init__(self, window_size: int = 6, confidence_threshold: float = 0.6,
                  pause_threshold: float = 2.0, min_letter_duration: float = 0.8):
+        """Initializes the WordTracker with configurable parameters.
+
+        Args:
+            window_size: The size of the prediction buffer.
+            confidence_threshold: The minimum prediction confidence to accept.
+            pause_threshold: The pause duration (in seconds) to finalize a word.
+            min_letter_duration: The time (in seconds) a letter must be held.
+        """
         self.window_size = window_size
         self.confidence_threshold = confidence_threshold
         self.pause_threshold = pause_threshold
@@ -148,11 +200,34 @@ class WordTracker:
         self.dictionary = OnlineDictionaryAPI()
 
     def get_word_suggestions(self, partial_word: str, max_suggestions: int = 3) -> List[str]:
-        """Get word suggestions from online dictionary."""
+        """Gets word suggestions for the current partial word.
+
+        Args:
+            partial_word: The word to get suggestions for.
+            max_suggestions: The maximum number of suggestions to return.
+
+        Returns:
+            A list of suggested words.
+        """
         return self.dictionary.get_word_suggestions(partial_word, max_suggestions)
 
     def add_prediction(self, letter: str, confidence: float) -> Tuple[str, bool, float]:
-        """Add prediction and track word progress."""
+        """Processes a new letter prediction to update the current word.
+
+        This is the core method of the tracker. It updates the internal state
+        based on the new prediction, checks for stable letters, manages the
+        hold timer, and determines if a word has been finalized.
+
+        Args:
+            letter: The predicted letter.
+            confidence: The confidence score of the prediction.
+
+        Returns:
+            A tuple containing:
+            - The current word being formed.
+            - A boolean indicating if the word was just finalized.
+            - A float from 0.0 to 1.0 representing the progress of holding the current letter.
+        """
         current_time = time.time()
         word_finalized = False
 
@@ -193,7 +268,15 @@ class WordTracker:
         return self.current_word, word_finalized, self.letter_hold_progress
 
     def _get_stable_letter(self) -> str:
-        """Get most stable letter from buffer."""
+        """Determines the most stable letter from the prediction buffer.
+
+        It calculates a weighted score for each letter in the buffer, giving
+        more weight to recent and high-confidence predictions.
+
+        Returns:
+            The letter with the highest score, or an empty string if the
+            buffer is empty.
+        """
         if not self.prediction_buffer:
             return ""
 
@@ -208,7 +291,11 @@ class WordTracker:
         return letter_scores.most_common(1)[0][0] if letter_scores else ""
 
     def auto_complete_word(self) -> Optional[str]:
-        """Auto-complete current word."""
+        """Finalizes and returns the current word.
+
+        Returns:
+            The completed word, or None if there is no current word.
+        """
         if self.current_word and not self.word_finalized:
             self.recognized_words.append(self.current_word)
             self.total_words += 1
@@ -218,7 +305,14 @@ class WordTracker:
         return None
 
     def select_suggestion(self, index: int) -> Optional[str]:
-        """Select word suggestion."""
+        """Selects a word from the suggestions list to be the new current word.
+
+        Args:
+            index: The 0-based index of the suggestion to select.
+
+        Returns:
+            The selected word, or None if the index is invalid.
+        """
         suggestions = self.get_word_suggestions(self.current_word)
         if 0 <= index < len(suggestions):
             selected = suggestions[index]
@@ -229,7 +323,7 @@ class WordTracker:
         return None
 
     def reset_word(self):
-        """Reset current word."""
+        """Resets the state to begin tracking a new word."""
         self.current_word = ""
         self.word_finalized = False
         self.current_letter = ""
@@ -237,7 +331,12 @@ class WordTracker:
         self.letter_hold_progress = 0.0
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get tracking statistics."""
+        """Returns a dictionary of the current tracking statistics.
+
+        Returns:
+            A dictionary containing stats like total words, current word,
+            and recent words.
+        """
         return {
             "total_words": self.total_words,
             "current_word": self.current_word,
@@ -250,9 +349,25 @@ class WordTracker:
 
 
 class SimpleAmharicTranslator:
-    """Simple Amharic translator using Google Translate."""
+    """A simple wrapper for translating English text to Amharic.
+
+    This class uses the `deep_translator` library (with a fallback to
+    `googletrans`) to provide translations. It includes a cache to avoid
+    re-translating the same text.
+
+    Attributes:
+        use_translation (bool): Flag to enable or disable translation.
+        translator: The translator object from the backing library.
+        translation_available (bool): True if a translation service was successfully initialized.
+        translation_cache (Dict[str, str]): A cache for translations.
+    """
 
     def __init__(self, use_translation: bool = False):
+        """Initializes the translator.
+
+        Args:
+            use_translation: If True, attempts to initialize a translation service.
+        """
         self.use_translation = use_translation
         self.translator = None
         self.translation_available = False
@@ -262,7 +377,7 @@ class SimpleAmharicTranslator:
             self._initialize_translator()
 
     def _initialize_translator(self):
-        """Initialize translation service."""
+        """Initializes a translation service, trying `deep_translator` first."""
         try:
             from deep_translator import GoogleTranslator
             self.translator = GoogleTranslator(source='en', target='am')
@@ -300,7 +415,15 @@ class SimpleAmharicTranslator:
         logger.info("Install with: pip install deep-translator")
 
     def translate(self, text: str) -> Optional[str]:
-        """Translate English to Amharic."""
+        """Translates English text to Amharic.
+
+        Args:
+            text: The English text to translate.
+
+        Returns:
+            The Amharic translation as a string, or None if translation fails
+            or is disabled.
+        """
         if not self.use_translation or not self.translation_available or not text.strip():
             return None
 
@@ -333,9 +456,26 @@ class SimpleAmharicTranslator:
 
 
 class SimpleTTS:
-    """Simple TTS engine."""
+    """A simple, non-blocking Text-to-Speech (TTS) engine.
+
+    This class uses gTTS (Google Text-to-Speech) to generate audio and plays
+    it back using either Pygame or a system command-line player (like mpg123).
+    Speech requests are handled in a separate thread to prevent blocking the
+    main application loop.
+
+    Attributes:
+        use_google (bool): Flag to enable Google TTS.
+        google_available (bool): True if gTTS and a playback method are available.
+        speech_queue (queue.Queue): A queue to hold pending speech requests.
+        is_running (bool): A flag to control the worker thread.
+    """
 
     def __init__(self, use_google: bool = True):
+        """Initializes the TTS engine and starts the worker thread.
+
+        Args:
+            use_google: If True, attempts to use Google TTS.
+        """
         self.use_google = use_google
         self.google_available = False
         self.speech_queue = queue.Queue()
@@ -349,7 +489,7 @@ class SimpleTTS:
         self.tts_thread.start()
 
     def _test_google_tts(self):
-        """Test Google TTS availability."""
+        """Checks for the availability of gTTS and a suitable audio player."""
         try:
             import gtts
             try:
@@ -370,7 +510,7 @@ class SimpleTTS:
             logger.info("gTTS not installed")
 
     def _tts_worker(self):
-        """TTS worker thread."""
+        """The worker method that runs in a separate thread to process speech requests."""
         while self.is_running:
             try:
                 text, lang = self.speech_queue.get(timeout=1.0)
@@ -380,7 +520,17 @@ class SimpleTTS:
                 continue
 
     def _romanize_amharic(self, amharic_text: str) -> str:
-        """Convert Amharic script to romanized pronunciation for TTS."""
+        """Converts Amharic text to a romanized (Latin script) form for TTS.
+
+        This is a workaround because gTTS does not have a native Amharic voice.
+        It uses a simple dictionary lookup for common words.
+
+        Args:
+            amharic_text: The Amharic text to convert.
+
+        Returns:
+            A romanized string that can be pronounced by an English TTS voice.
+        """
         # Simple Amharic to romanized mapping for common words
         amharic_romanized = {
             'ሰላም': 'selam',
@@ -408,7 +558,18 @@ class SimpleTTS:
         return amharic_romanized.get(amharic_text, amharic_text)
 
     def _speak_with_google(self, text: str, lang: str = 'en') -> bool:
-        """Speak using Google TTS with romanized Amharic support."""
+        """Generates and plays audio for the given text using Google TTS.
+
+        For Amharic, it first romanizes the text. The generated MP3 file is
+        saved to a temporary directory and played back in a non-blocking manner.
+
+        Args:
+            text: The text to speak.
+            lang: The language of the text ('en' or 'am').
+
+        Returns:
+            True if the speech was successfully initiated, False otherwise.
+        """
         if not self.google_available:
             return False
 
@@ -460,7 +621,11 @@ class SimpleTTS:
         return False
 
     def _cleanup_audio_file(self, file_path: str):
-        """Clean up audio file after delay."""
+        """Deletes a temporary audio file after a delay.
+
+        Args:
+            file_path: The path to the audio file to delete.
+        """
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -468,7 +633,15 @@ class SimpleTTS:
             pass
 
     def speak(self, text: str, lang: str = 'en') -> bool:
-        """Queue text for speech."""
+        """Adds a text-to-speech request to the processing queue.
+
+        Args:
+            text: The text to be spoken.
+            lang: The language of the text ('en' or 'am').
+
+        Returns:
+            True if the request was successfully queued, False if the queue is full.
+        """
         try:
             self.speech_queue.put_nowait((text, lang))
             return True
@@ -476,21 +649,45 @@ class SimpleTTS:
             return False
 
     def stop(self):
-        """Stop TTS engine."""
+        """Stops the TTS worker thread."""
         self.is_running = False
 
 
 class ModernProgressBar:
-    """Circular progress bar for letter hold duration."""
+    """A UI component to draw a circular progress bar.
+
+    This is used to visualize the hold duration for the current stable letter.
+
+    Attributes:
+        center (Tuple[int, int]): The (x, y) coordinates for the center of the bar.
+        radius (int): The outer radius of the progress bar.
+        thickness (int): The thickness of the progress bar ring.
+    """
 
     def __init__(self, center: Tuple[int, int], radius: int = 35, thickness: int = 8):
+        """Initializes the progress bar's dimensions and position.
+
+        Args:
+            center: The (x, y) coordinates for the center of the bar.
+            radius: The outer radius.
+            thickness: The thickness of the bar.
+        """
         self.center = center
         self.radius = radius
         self.thickness = thickness
         self.inner_radius = radius - thickness
 
     def draw(self, frame: np.ndarray, progress: float, letter: str = "") -> np.ndarray:
-        """Draw animated circular progress bar."""
+        """Draws the progress bar onto a frame.
+
+        Args:
+            frame: The OpenCV image (numpy array) to draw on.
+            progress: The progress value from 0.0 to 1.0.
+            letter: The letter to display in the center of the bar.
+
+        Returns:
+            The frame with the progress bar drawn on it.
+        """
         progress = max(0.0, min(1.0, progress))
 
         cv2.circle(frame, self.center, self.radius, (40, 40, 40), self.thickness)
@@ -526,9 +723,25 @@ class ModernProgressBar:
 
 
 class WordCompletionBanner:
-    """Animated banner for completed words with proper Amharic display."""
+    """A UI component to display an animated banner when a word is completed.
+
+    This banner shows the completed English word and its Amharic translation.
+    It uses the Pillow (PIL) library to render Amharic text correctly, as
+    OpenCV's default fonts do not support the script well.
+
+    Attributes:
+        frame_width (int): The width of the video frame.
+        frame_height (int): The height of the video frame.
+        pil_available (bool): True if the Pillow library is installed.
+    """
 
     def __init__(self, frame_width: int, frame_height: int):
+        """Initializes the banner's dimensions.
+
+        Args:
+            frame_width: The width of the target frame.
+            frame_height: The height of the target frame.
+        """
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.banner_height = 140
@@ -536,7 +749,11 @@ class WordCompletionBanner:
         self.pil_available = self._test_pil()
 
     def _test_pil(self) -> bool:
-        """Test if PIL is available for better text rendering."""
+        """Checks if the Pillow library is available.
+
+        Returns:
+            True if Pillow can be imported, False otherwise.
+        """
         try:
             from PIL import Image, ImageDraw, ImageFont
             return True
@@ -547,7 +764,21 @@ class WordCompletionBanner:
 
     def _draw_amharic_with_pil(self, frame: np.ndarray, amharic_text: str,
                               x: int, y: int, width: int) -> np.ndarray:
-        """Draw Amharic text using PIL for proper Unicode support."""
+        """Draws Amharic text onto a frame using the Pillow library.
+
+        This method is necessary for correct rendering of Unicode scripts like
+        Amharic. It searches for a suitable system font to use.
+
+        Args:
+            frame: The OpenCV frame to draw on.
+            amharic_text: The Amharic text to render.
+            x: The starting x-coordinate for the text area.
+            y: The starting y-coordinate for the text area.
+            width: The width of the text area for centering.
+
+        Returns:
+            The frame with the Amharic text rendered on it.
+        """
         try:
             from PIL import Image, ImageDraw, ImageFont
             import numpy as np
@@ -649,7 +880,16 @@ class WordCompletionBanner:
             return frame
 
     def _transliterate_amharic(self, amharic_text: str) -> str:
-        """Convert Amharic to Latin transliteration for fallback display."""
+        """Converts Amharic text to a Latin script transliteration.
+
+        This is a fallback for display purposes if PIL is not available.
+
+        Args:
+            amharic_text: The Amharic text to transliterate.
+
+        Returns:
+            A string containing the Latin-script representation.
+        """
         transliteration_map = {
             'ሰላም': 'selam', 'ደህና': 'dehna', 'እንደምን': 'endemin',
             'አመሰግናለሁ': 'amesegnalew', 'ዓላማ': 'alama', 'ማዕከል': 'ma\'ekel',
@@ -661,7 +901,18 @@ class WordCompletionBanner:
 
     def draw(self, frame: np.ndarray, word: str, flash_progress: float,
              amharic_translation: Optional[str] = None) -> np.ndarray:
-        """Draw animated completion banner."""
+        """Draws the animated word completion banner on the frame.
+
+        Args:
+            frame: The OpenCV frame to draw on.
+            word: The completed English word.
+            flash_progress: A value from 1.0 to 0.0 controlling the banner's
+                animation (e.g., fade-out).
+            amharic_translation: The optional Amharic translation to display.
+
+        Returns:
+            The frame with the banner drawn on it.
+        """
         if not word or flash_progress <= 0:
             return frame
 
@@ -730,9 +981,19 @@ class WordCompletionBanner:
 
 
 class SuggestionsPanel:
-    """Modern suggestions panel."""
+    """A UI component to display word suggestions.
+
+    This panel shows the current word being formed and a list of clickable
+    suggestions fetched from the `OnlineDictionaryAPI`.
+    """
 
     def __init__(self, frame_width: int, frame_height: int):
+        """Initializes the panel's dimensions and position.
+
+        Args:
+            frame_width: The width of the target frame.
+            frame_height: The height of the target frame.
+        """
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.panel_width = 280
@@ -740,7 +1001,16 @@ class SuggestionsPanel:
         self.button_height = 40
 
     def draw(self, frame: np.ndarray, current_word: str, suggestions: List[str]) -> np.ndarray:
-        """Draw suggestions panel."""
+        """Draws the suggestions panel onto a frame.
+
+        Args:
+            frame: The OpenCV frame to draw on.
+            current_word: The current word being typed.
+            suggestions: A list of word suggestions to display.
+
+        Returns:
+            The frame with the panel drawn on it.
+        """
         if not current_word:
             return frame
 
@@ -792,11 +1062,41 @@ class SuggestionsPanel:
 
 
 class ASLRealTimeInference:
-    """Main ASL inference system."""
+    """Orchestrates the real-time ASL recognition system.
+
+    This is the main class that integrates all other components:
+    - Loads the TFLite model and metadata.
+    - Initializes MediaPipe for hand tracking.
+    - Captures video from the camera.
+    - Processes each frame to run inference.
+    - Uses `WordTracker` to build words from predictions.
+    - Handles user input for controls.
+    - Manages translation and TTS.
+    - Draws the complete UI with all components.
+
+    Attributes:
+        model_path (Path): Path to the TFLite model file.
+        metadata_path (Path): Path to the class metadata JSON file.
+        interpreter: The TFLite interpreter instance.
+        word_tracker (WordTracker): The instance for tracking word formation.
+        amharic_translator (Optional[SimpleAmharicTranslator]): The translator instance.
+        tts_engine (Optional[SimpleTTS]): The TTS engine instance.
+    """
 
     def __init__(self, model_path: str, metadata_path: str, camera_index: int = 0,
                  enable_speech: bool = True, use_google_tts: bool = True,
                  show_landmarks: bool = False, enable_amharic: bool = False):
+        """Initializes the ASL inference system.
+
+        Args:
+            model_path: Path to the `.tflite` model file.
+            metadata_path: Path to the metadata JSON file.
+            camera_index: The index of the camera to use.
+            enable_speech: If True, enables the text-to-speech engine.
+            use_google_tts: If True, prioritizes Google TTS.
+            show_landmarks: If True, draws MediaPipe hand landmarks on the frame.
+            enable_amharic: If True, enables Amharic translation.
+        """
 
         self.model_path = Path(model_path)
         self.metadata_path = Path(metadata_path)
@@ -847,7 +1147,12 @@ class ASLRealTimeInference:
         self.fps_counter = deque(maxlen=30)
 
     def load_model(self) -> None:
-        """Load TensorFlow Lite model."""
+        """Loads the TensorFlow Lite model and allocates tensors.
+
+        Raises:
+            FileNotFoundError: If the model file does not exist.
+            ValueError: If the model does not have the expected number of inputs.
+        """
         try:
             if not self.model_path.exists():
                 raise FileNotFoundError(f"Model not found: {self.model_path}")
@@ -869,7 +1174,12 @@ class ASLRealTimeInference:
             sys.exit(1)
 
     def load_metadata(self) -> None:
-        """Load class mapping metadata."""
+        """Loads the class mapping from the metadata JSON file.
+
+        Raises:
+            FileNotFoundError: If the metadata file does not exist.
+            ValueError: If the metadata file does not contain a valid class mapping.
+        """
         try:
             if not self.metadata_path.exists():
                 raise FileNotFoundError(f"Metadata not found: {self.metadata_path}")
@@ -894,7 +1204,7 @@ class ASLRealTimeInference:
             sys.exit(1)
 
     def initialize_mediapipe(self) -> None:
-        """Initialize MediaPipe hands detection."""
+        """Initializes the MediaPipe Hands solution for hand tracking."""
         try:
             self.mp_hands = mp.solutions.hands
             self.mp_drawing = mp.solutions.drawing_utils
@@ -912,7 +1222,11 @@ class ASLRealTimeInference:
             sys.exit(1)
 
     def initialize_camera(self) -> None:
-        """Initialize camera."""
+        """Initializes the camera capture with specified dimensions.
+
+        Raises:
+            RuntimeError: If the camera cannot be opened.
+        """
         try:
             self.cap = cv2.VideoCapture(self.camera_index)
             if not self.cap.isOpened():
@@ -929,13 +1243,26 @@ class ASLRealTimeInference:
             sys.exit(1)
 
     def initialize_ui_components(self, frame_width: int, frame_height: int) -> None:
-        """Initialize UI components."""
+        """Initializes all UI components based on the frame dimensions.
+
+        Args:
+            frame_width: The width of the video frame.
+            frame_height: The height of the video frame.
+        """
         self.progress_bar = ModernProgressBar((80, 80))
         self.completion_banner = WordCompletionBanner(frame_width, frame_height)
         self.suggestions_panel = SuggestionsPanel(frame_width, frame_height)
 
     def extract_hand_landmarks(self, results) -> Optional[np.ndarray]:
-        """Extract hand landmarks as flat array."""
+        """Extracts normalized 2D hand landmarks from MediaPipe results.
+
+        Args:
+            results: The output from `mediapipe.solutions.hands.process`.
+
+        Returns:
+            A numpy array of flattened landmark coordinates (x1, y1, x2, y2, ...),
+            or None if no hands were detected.
+        """
         if not results.multi_hand_landmarks:
             return None
 
@@ -946,7 +1273,19 @@ class ASLRealTimeInference:
         return np.array(landmarks, dtype=np.float32)
 
     def crop_hand_region(self, frame: np.ndarray, results) -> Optional[np.ndarray]:
-        """Crop hand region from frame."""
+        """Crops the region of the hand from the frame based on landmarks.
+
+        Calculates a bounding box around the detected hand landmarks and crops
+        that region from the frame.
+
+        Args:
+            frame: The original video frame.
+            results: The output from MediaPipe.
+
+        Returns:
+            The cropped hand image, resized to the model's expected input size,
+            or None if no hand was found.
+        """
         if not results.multi_hand_landmarks:
             return None
 
@@ -970,7 +1309,19 @@ class ASLRealTimeInference:
 
     def preprocess_inputs(self, image: Optional[np.ndarray],
                          landmarks: Optional[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
-        """Preprocess model inputs."""
+        """Prepares the image and landmark data for the TFLite model.
+
+        This involves normalizing the image, handling cases where no hand is
+        detected (by providing zero-arrays), and adding a batch dimension.
+
+        Args:
+            image: The cropped hand image.
+            landmarks: The array of hand landmarks.
+
+        Returns:
+            A tuple containing the processed image and landmark tensors ready
+            for the model.
+        """
         if image is None:
             processed_image = np.zeros((224, 224, 3), dtype=np.float32)
         else:
@@ -989,7 +1340,15 @@ class ASLRealTimeInference:
         return image_input, landmarks_input
 
     def predict(self, image_input: np.ndarray, landmarks_input: np.ndarray) -> Tuple[str, float]:
-        """Run model inference."""
+        """Runs inference on the TFLite model with the given inputs.
+
+        Args:
+            image_input: The preprocessed image tensor.
+            landmarks_input: The preprocessed landmarks tensor.
+
+        Returns:
+            A tuple containing the predicted class name and the confidence score.
+        """
         try:
             landmarks_idx = 0 if 'landmarks' in self.input_details[0]['name'].lower() else 1
             image_idx = 1 - landmarks_idx
@@ -1011,7 +1370,11 @@ class ASLRealTimeInference:
             return "Error", 0.0
 
     def calculate_fps(self) -> float:
-        """Calculate current FPS."""
+        """Calculates the current frames per second (FPS) based on a deque of timestamps.
+
+        Returns:
+            The calculated FPS.
+        """
         current_time = time.time()
         self.fps_counter.append(current_time)
 
@@ -1022,7 +1385,14 @@ class ASLRealTimeInference:
         return len(self.fps_counter) / time_span if time_span > 0 else 0.0
 
     def handle_word_completion(self, word: str):
-        """Handle completed word with translation and bilingual TTS."""
+        """Handles the logic for when a word is completed.
+
+        This includes triggering the Amharic translation and queuing the
+        English and Amharic text for text-to-speech.
+
+        Args:
+            word: The completed word.
+        """
         if not word:
             return
 
@@ -1063,7 +1433,24 @@ class ASLRealTimeInference:
     def draw_ui(self, frame: np.ndarray, prediction: str, confidence: float, results,
                 current_word: str, word_finalized: bool, letter_progress: float,
                 word_suggestions: List[str]) -> np.ndarray:
-        """Draw modern UI overlay."""
+        """Draws the entire user interface onto the frame.
+
+        This method orchestrates the drawing of all UI components, including
+        the info panel, progress bar, suggestions panel, and completion banner.
+
+        Args:
+            frame: The main video frame to draw on.
+            prediction: The current predicted letter.
+            confidence: The confidence of the current prediction.
+            results: The raw results from MediaPipe for landmark drawing.
+            current_word: The word currently being formed.
+            word_finalized: A flag indicating if a word was just finalized.
+            letter_progress: The hold progress for the current letter (0.0 to 1.0).
+            word_suggestions: A list of suggestions for the current word.
+
+        Returns:
+            The frame with the complete UI drawn on it.
+        """
         h, w = frame.shape[:2]
 
         if self.progress_bar is None:
@@ -1146,7 +1533,7 @@ class ASLRealTimeInference:
         return frame
 
     def run(self) -> None:
-        """Main inference loop."""
+        """The main application loop for video processing and inference."""
         logger.info("Starting ASL inference with Amharic translation...")
         logger.info("Controls: '0'=complete, 'r'=reset, '1/2/3'=suggestions, 'l'=landmarks, 'q'=quit")
 
@@ -1227,7 +1614,7 @@ class ASLRealTimeInference:
             self.cleanup()
 
     def cleanup(self) -> None:
-        """Clean up resources."""
+        """Releases all resources, such as the camera and TTS engine."""
         logger.info("Cleaning up...")
 
         if self.tts_engine:
@@ -1241,7 +1628,12 @@ class ASLRealTimeInference:
 
 
 def diagnose_system():
-    """Run system diagnostic with clear instructions."""
+    """Runs a diagnostic check to verify all dependencies are installed and working.
+
+    This function prints a report of required and optional dependencies,
+    their status (installed/missing), and instructions for installation.
+    It also tests the translation services.
+    """
     print("\n" + "="*60)
     print("ASL SYSTEM DIAGNOSTIC")
     print("="*60)
@@ -1343,7 +1735,11 @@ def diagnose_system():
 
 
 def main():
-    """Main application entry point."""
+    """The main entry point for the script.
+
+    Parses command-line arguments and initializes and runs the
+    `ASLRealTimeInference` system.
+    """
     parser = argparse.ArgumentParser(description="ASL Inference with Amharic Translation")
 
     parser.add_argument('--model', default='export/asl_model.tflite',

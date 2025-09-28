@@ -1,256 +1,214 @@
 #!/usr/bin/env python3
 """
-TensorFlow Lite inference script for hand gesture recognition.
-Takes an image and extracts hand landmarks using MediaPipe, then runs inference
-on a TFLite model that expects both image and landmark inputs.
+Single Image Inference for Hand Gesture Recognition.
+
+This script performs hand gesture recognition on a single static image using a
+pre-trained TensorFlow Lite model. It demonstrates the complete inference
+pipeline for one image:
+1.  Loads the image from the specified path.
+2.  Uses MediaPipe to detect a hand and extract its 2D landmarks.
+3.  Preprocesses both the image and the landmarks to match the model's input
+    requirements.
+4.  Loads the TFLite model.
+5.  Runs inference using both the image and landmark data.
+6.  Prints the predicted class label and the model's confidence score.
+
+Usage:
+    python predictImage.py --image <path_to_image> --model <path_to_model.tflite> --metadata <path_to_metadata.json>
 """
 
 import argparse
 import json
 import sys
-import os
-from typing import Optional, Tuple
-import numpy as np
+from pathlib import Path
+from typing import Optional, Tuple, Dict, Any
+
 import cv2
 import mediapipe as mp
+import numpy as np
 import tensorflow as tf
 
 
-def load_and_preprocess_image(image_path: str, target_size: Tuple[int, int] = (224, 224)) -> Optional[np.ndarray]:
-    """
-    Load and preprocess an image for model inference.
+def load_and_preprocess_image(image_path: Path, target_size: Tuple[int, int] = (224, 224)) -> Optional[np.ndarray]:
+    """Loads an image, resizes it, and preprocesses it for model inference.
 
     Args:
-        image_path: Path to the input image
-        target_size: Target size for resizing (width, height)
+        image_path: The path to the input image file.
+        target_size: A tuple (height, width) for resizing the image.
 
     Returns:
-        Preprocessed image array of shape (1, height, width, 3) or None if error
+        A preprocessed image as a numpy array with shape (1, height, width, 3)
+        and values normalized to [0, 1], or None if an error occurs.
     """
     try:
-        # Load image
-        image = cv2.imread(image_path)
+        if not image_path.exists():
+            print(f"Error: Image file not found at {image_path}")
+            return None
+
+        image = cv2.imread(str(image_path))
         if image is None:
             print(f"Error: Could not load image from {image_path}")
             return None
 
-        # Convert BGR to RGB
         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        # Resize to target size
         image_resized = cv2.resize(image_rgb, target_size, interpolation=cv2.INTER_AREA)
-
-        # Normalize to [0, 1] and add batch dimension
         image_normalized = image_resized.astype(np.float32) / 255.0
         image_batch = np.expand_dims(image_normalized, axis=0)
 
         return image_batch
-
     except Exception as e:
-        print(f"Error preprocessing image: {e}")
+        print(f"Error during image preprocessing: {e}")
         return None
 
 
-def extract_hand_landmarks(image_path: str) -> np.ndarray:
-    """
-    Extract hand landmarks from an image using MediaPipe Hands.
+def extract_hand_landmarks(image_path: Path) -> np.ndarray:
+    """Extracts 2D hand landmarks from an image using MediaPipe Hands.
 
     Args:
-        image_path: Path to the input image
+        image_path: The path to the input image file.
 
     Returns:
-        Array of shape (42,) containing x,y coordinates of 21 landmarks
-        or zeros if no hand detected
+        A numpy array of shape (42,) containing the flattened x, y coordinates
+        of the 21 hand landmarks. Returns a zero array if no hand is detected.
     """
-    # Initialize MediaPipe Hands
     mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(
-        static_image_mode=True,
-        max_num_hands=1,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
+    with mp_hands.Hands(
+        static_image_mode=True, max_num_hands=1, min_detection_confidence=0.5
+    ) as hands:
+        try:
+            image = cv2.imread(str(image_path))
+            if image is None:
+                raise IOError(f"Could not read image from {image_path}")
 
-    try:
-        # Load and process image
-        image = cv2.imread(image_path)
-        if image is None:
-            print(f"Error: Could not load image from {image_path}")
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = hands.process(image_rgb)
+
+            if results.multi_hand_landmarks:
+                hand_landmarks = results.multi_hand_landmarks[0]
+                landmarks = [lm for landmark in hand_landmarks.landmark for lm in (landmark.x, landmark.y)]
+                return np.array(landmarks, dtype=np.float32)
+            else:
+                print("Warning: No hand detected in the image. Using zero landmarks.")
+                return np.zeros(42, dtype=np.float32)
+        except Exception as e:
+            print(f"Error extracting hand landmarks: {e}")
             return np.zeros(42, dtype=np.float32)
 
-        # Convert BGR to RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Process image to find hands
-        results = hands.process(image_rgb)
-
-        # Extract landmarks if hand detected
-        if results.multi_hand_landmarks and len(results.multi_hand_landmarks) > 0:
-            # Get first hand landmarks
-            hand_landmarks = results.multi_hand_landmarks[0]
-
-            # Extract x, y coordinates for all 21 landmarks
-            landmarks = []
-            for landmark in hand_landmarks.landmark:
-                landmarks.extend([landmark.x, landmark.y])
-
-            return np.array(landmarks, dtype=np.float32)
-        else:
-            print("Warning: No hand detected in image, using zero landmarks")
-            return np.zeros(42, dtype=np.float32)
-
-    except Exception as e:
-        print(f"Error extracting hand landmarks: {e}")
-        return np.zeros(42, dtype=np.float32)
-
-    finally:
-        hands.close()
-
-
-def load_tflite_model(model_path: str) -> Optional[tf.lite.Interpreter]:
-    """
-    Load a TensorFlow Lite model.
+def load_tflite_model(model_path: Path) -> Optional[tf.lite.Interpreter]:
+    """Loads a TensorFlow Lite model from a file.
 
     Args:
-        model_path: Path to the .tflite model file
+        model_path: The path to the `.tflite` model file.
 
     Returns:
-        TensorFlow Lite interpreter or None if error
+        An initialized TensorFlow Lite interpreter, or None if loading fails.
     """
     try:
-        if not os.path.exists(model_path):
-            print(f"Error: Model file not found at {model_path}")
-            return None
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file not found at {model_path}")
 
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = tf.lite.Interpreter(model_path=str(model_path))
         interpreter.allocate_tensors()
-
         return interpreter
-
     except Exception as e:
         print(f"Error loading TFLite model: {e}")
         return None
 
 
-def run_inference(interpreter: tf.lite.Interpreter, image_input: np.ndarray,
-                  landmarks_input: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Run inference on the TFLite model with image and landmarks inputs.
+def run_inference(
+    interpreter: tf.lite.Interpreter,
+    image_input: np.ndarray,
+    landmarks_input: np.ndarray,
+) -> Optional[np.ndarray]:
+    """Runs inference on a TFLite model that requires image and landmark inputs.
+
+    This function dynamically determines the correct input tensor indices for
+    the image and landmarks based on their expected shapes.
 
     Args:
-        interpreter: TensorFlow Lite interpreter
-        image_input: Preprocessed image array of shape (1, 224, 224, 3)
-        landmarks_input: Hand landmarks array of shape (42,)
+        interpreter: The initialized TFLite interpreter.
+        image_input: The preprocessed image tensor (shape: 1, H, W, 3).
+        landmarks_input: The landmark data tensor (shape: 42).
 
     Returns:
-        Output predictions array or None if error
+        The raw prediction output from the model, or None if an error occurs.
     """
     try:
-        # Get input and output details
         input_details = interpreter.get_input_details()
         output_details = interpreter.get_output_details()
 
         if len(input_details) != 2:
-            print(f"Error: Model expects 2 inputs, but found {len(input_details)}")
-            return None
+            raise ValueError(f"Model expects 2 inputs, but found {len(input_details)}")
 
-        # Sort input details by index to ensure correct order
-        input_details = sorted(input_details, key=lambda x: x['index'])
+        # Identify input tensor indices by shape
+        image_idx = next(i for i, d in enumerate(input_details) if tuple(d['shape']) == (1, 224, 224, 3))
+        landmarks_idx = next(i for i, d in enumerate(input_details) if tuple(d['shape']) == (1, 42))
 
-        print(f"Input 0 shape: {input_details[0]['shape']}")
-        print(f"Input 1 shape: {input_details[1]['shape']}")
+        # Set tensors
+        interpreter.set_tensor(input_details[image_idx]['index'], image_input)
+        interpreter.set_tensor(input_details[landmarks_idx]['index'], np.expand_dims(landmarks_input, axis=0))
 
-        # Determine which input is landmarks vs image based on shape
-        landmarks_input_idx = None
-        image_input_idx = None
-
-        for i, detail in enumerate(input_details):
-            shape = detail['shape']
-            if len(shape) == 2 and shape[1] == 42:  # landmarks input (batch_size, 42)
-                landmarks_input_idx = i
-            elif len(shape) == 4 and shape[1] == 224 and shape[2] == 224 and shape[3] == 3:  # image input
-                image_input_idx = i
-
-        if landmarks_input_idx is None or image_input_idx is None:
-            print("Error: Could not identify landmarks and image inputs from model")
-            return None
-
-        # Prepare landmarks input with batch dimension
-        landmarks_batch = np.expand_dims(landmarks_input, axis=0)
-
-        # Set input tensors in correct order
-        interpreter.set_tensor(input_details[landmarks_input_idx]['index'], landmarks_batch)
-        interpreter.set_tensor(input_details[image_input_idx]['index'], image_input)
-
-        print(f"Setting landmarks to input {landmarks_input_idx}: shape {landmarks_batch.shape}")
-        print(f"Setting image to input {image_input_idx}: shape {image_input.shape}")
-
-        # Run inference
         interpreter.invoke()
-
-        # Get output
-        output_data = interpreter.get_tensor(output_details[0]['index'])
-
-        return output_data
-
+        return interpreter.get_tensor(output_details[0]['index'])
+    except (StopIteration, ValueError) as e:
+        print(f"Error: Model input signature mismatch. Could not find expected input shapes. Details: {e}")
+        return None
     except Exception as e:
-        print(f"Error during inference: {e}")
+        print(f"An error occurred during inference: {e}")
         return None
 
 
 def main():
-    with open("processed_asl/metadata.json") as f:
-        metadata = json.load(f)
-    class_labels = {v: k for k, v in metadata["classes"].items()}
-    parser = argparse.ArgumentParser(description='Run inference on hand gesture recognition model')
-    parser.add_argument('--image', required=True, help='Path to input image')
-    parser.add_argument('--model', default='export/asl_model.tflite',
-                        help='Path to TFLite model (default: export/asl_model.tflite)')
-
+    """Orchestrates the single-image prediction pipeline."""
+    parser = argparse.ArgumentParser(
+        description="Run inference on a single image for hand gesture recognition.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--image", required=True, type=Path, help="Path to the input image.")
+    parser.add_argument("--model", type=Path, default=Path("export/asl_model.tflite"), help="Path to the TFLite model.")
+    parser.add_argument("--metadata", type=Path, default=Path("processed_asl/metadata.json"), help="Path to the metadata JSON file.")
     args = parser.parse_args()
 
-    print(f"Loading image: {args.image}")
-    print(f"Loading model: {args.model}")
-    print("-" * 50)
+    print(f"Loading metadata from: {args.metadata}")
+    with open(args.metadata) as f:
+        metadata = json.load(f)
+    # Create a mapping from integer index to class name string
+    class_labels = {int(k): v for k, v in metadata["classes"].items()}
 
-    # Load and preprocess image
+    print("-" * 50)
+    print(f"Processing image: {args.image}")
+
     image_input = load_and_preprocess_image(args.image)
     if image_input is None:
         sys.exit(1)
+    print(f"Image preprocessed successfully. Shape: {image_input.shape}")
 
-    print(f"Image preprocessed to shape: {image_input.shape}")
-
-    # Extract hand landmarks
     landmarks_input = extract_hand_landmarks(args.image)
-    print(f"Hand landmarks extracted: shape {landmarks_input.shape}")
+    print(f"Hand landmarks extracted. Shape: {landmarks_input.shape}")
 
-    # Load TFLite model
+    print(f"Loading model: {args.model}")
     interpreter = load_tflite_model(args.model)
     if interpreter is None:
         sys.exit(1)
+    print("TFLite model loaded successfully.")
 
-    print("TFLite model loaded successfully")
-
-    # Run inference
+    print("Running inference...")
     predictions = run_inference(interpreter, image_input, landmarks_input)
     if predictions is None:
         sys.exit(1)
+    print("Inference complete.")
 
-    # Process results
+    # Process and display results
+    predicted_class_idx = np.argmax(predictions[0])
+    predicted_label = class_labels.get(predicted_class_idx, f"Unknown({predicted_class_idx})")
+    confidence = predictions[0][predicted_class_idx]
+
     print("-" * 50)
-    print("INFERENCE RESULTS:")
-    print(f"Raw output shape: {predictions.shape}")
-    print(f"Raw probabilities: {predictions[0]}")
-
-    # Get predicted class (highest probability)
-    predicted_class = np.argmax(predictions[0])
-    predicted_label = class_labels.get(predicted_class, f"Unknown({predicted_class})")
-    predicted_confidence = predictions[0][predicted_class]
-
-    print(f"Predicted class index: {predicted_class}")
-    print(f"Predicted ASL letter: '{predicted_label}'")
-    print(f"Confidence: {predicted_confidence:.4f}")
-    print(f"Result: Class {predicted_class} = '{predicted_label}' ({predicted_confidence:.4f})")
+    print("INFERENCE RESULTS")
+    print("-" * 50)
+    print(f"Predicted ASL Letter: '{predicted_label}'")
+    print(f"Confidence: {confidence:.4f}")
     print("-" * 50)
 
 

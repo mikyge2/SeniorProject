@@ -35,7 +35,23 @@ if gpus:
 
 
 class SignLanguageTrainer:
-    """Production-grade trainer for sign language classification models."""
+    """Manages the end-to-end training and evaluation of a sign language classification model.
+
+    This class encapsulates the entire training pipeline, including data loading,
+    model construction, training execution, evaluation, and results reporting.
+    It uses a MobileNetV2 backbone combined with hand landmark data for a
+    multi-modal approach to sign language recognition.
+
+    Attributes:
+        batch_size (int): The size of batches for training and evaluation.
+        learning_rate (float): The initial learning rate for the Adam optimizer.
+        num_classes (int): The number of distinct classes for classification.
+        image_size (Tuple[int, int]): The target dimensions (height, width) for input images.
+        num_landmarks (int): The number of hand landmark features (e.g., 42 for 21 2D points).
+        history (Optional[tf.keras.callbacks.History]): Stores the training history.
+        training_time (float): The total time taken for training, in seconds.
+        model (Optional[Model]): The compiled Keras model.
+    """
 
     def __init__(self,
                  batch_size: int = 32,
@@ -43,15 +59,14 @@ class SignLanguageTrainer:
                  num_classes: int = 29,
                  image_size: Tuple[int, int] = (224, 224),
                  num_landmarks: int = 42):
-        """
-        Initialize the trainer with configuration parameters.
+        """Initializes the SignLanguageTrainer with training configurations.
 
         Args:
-            batch_size: Training batch size
-            learning_rate: Learning rate for Adam optimizer
-            num_classes: Number of classification classes
-            image_size: Input image dimensions (height, width)
-            num_landmarks: Number of hand landmark coordinates (21 points × 2)
+            batch_size: The batch size to use for training and evaluation.
+            learning_rate: The learning rate for the Adam optimizer.
+            num_classes: The total number of classes to predict.
+            image_size: A tuple representing the (height, width) of input images.
+            num_landmarks: The number of hand landmark coordinates (e.g., 21 points * 2 coords = 42).
         """
         self.batch_size = batch_size
         self.learning_rate = learning_rate
@@ -65,15 +80,21 @@ class SignLanguageTrainer:
         self.model = None
 
     def parse_tfrecord_fn(self, example_proto: tf.Tensor) -> Tuple[Dict[str, tf.Tensor], tf.Tensor]:
-        """
-        Parse a single TFRecord example.
+        """Parses a single TFRecord example into features and a one-hot encoded label.
+
+        This function defines the structure of the TFRecord and decodes a
+        serialized example into its constituent parts: an image, hand landmarks,
+        and a label. The image is normalized to [0, 1], and the label is
+        converted to a one-hot vector.
 
         Args:
-            example_proto: Serialized TFRecord example
+            example_proto: A scalar string tensor representing a serialized
+                `tf.train.Example` proto.
 
         Returns:
-            Tuple of (features_dict, label) where features_dict contains
-            'image' and 'landmarks' keys, and label is one-hot encoded
+            A tuple containing:
+            - A dictionary of features with 'image' and 'landmarks' tensors.
+            - A one-hot encoded label tensor.
         """
         # Define the feature description
         feature_description = {
@@ -111,17 +132,24 @@ class SignLanguageTrainer:
                      tfrecord_path: str,
                      is_training: bool = True,
                      shuffle_buffer: int = 1000,
-                     seed: int= 47) -> tf.data.Dataset:
-        """
-        Load and preprocess dataset from TFRecord files.
+                     seed: int = 47) -> tf.data.Dataset:
+        """Loads and prepares a dataset from a TFRecord file.
+
+        This method creates a `tf.data.Dataset` from a TFRecord file, parses
+        the records using `parse_tfrecord_fn`, and sets up the dataset for
+        training or evaluation. For training, it shuffles and repeats the
+        dataset indefinitely. For all modes, it batches the data and prefetches
+        for optimal performance.
 
         Args:
-            tfrecord_path: Path to TFRecord file
-            is_training: Whether this is training data (affects shuffling/repeating)
-            shuffle_buffer: Buffer size for shuffling (only used for training)
+            tfrecord_path: The path to the `.tfrecord` file.
+            is_training: If True, the dataset is shuffled and repeated.
+            shuffle_buffer: The size of the buffer used for shuffling.
+            seed: A random seed for shuffling to ensure reproducibility.
 
         Returns:
-            Preprocessed tf.data.Dataset ready for training/evaluation
+            A `tf.data.Dataset` object ready for use in `model.fit` or
+            `model.evaluate`.
         """
         # Load TFRecord dataset
         dataset = tf.data.TFRecordDataset(tfrecord_path)
@@ -146,11 +174,18 @@ class SignLanguageTrainer:
         return dataset
 
     def build_model(self) -> Model:
-        """
-        Build MobileNetV2-based model with hand landmarks integration.
+        """Builds and compiles the sign language classification model.
+
+        The model architecture consists of two main input branches:
+        1. An image branch using a pre-trained MobileNetV2 model (frozen) for
+           feature extraction from hand images.
+        2. A landmark branch that processes normalized hand landmark coordinates.
+
+        These two feature sets are concatenated and passed through a dense
+        classification head with dropout for regularization.
 
         Returns:
-            Compiled Keras model ready for training
+            A compiled Keras `Model` instance ready for training.
         """
         # Input layers
         image_input = layers.Input(shape=(*self.image_size, 3), name='image')
@@ -204,14 +239,20 @@ class SignLanguageTrainer:
         return model
 
     def setup_callbacks(self, save_dir: str) -> list:
-        """
-        Setup training callbacks for checkpointing, early stopping, and logging.
+        """Configures and returns a list of Keras callbacks for training.
+
+        This method sets up a standard suite of callbacks to enhance the training
+        process, including:
+        - `ModelCheckpoint`: To save the best model based on validation accuracy.
+        - `EarlyStopping`: To halt training if validation accuracy plateaus.
+        - `TensorBoard`: To log metrics for visualization.
+        - `ReduceLROnPlateau`: To decrease the learning rate if validation loss stagnates.
 
         Args:
-            save_dir: Directory to save model checkpoints and logs
+            save_dir: The directory where model checkpoints and logs will be saved.
 
         Returns:
-            List of configured Keras callbacks
+            A list of configured `tf.keras.callbacks.Callback` instances.
         """
         # Ensure save directory exists
         Path(save_dir).mkdir(parents=True, exist_ok=True)
@@ -260,14 +301,16 @@ class SignLanguageTrainer:
         ]
 
     def calculate_steps(self, tfrecord_path: str) -> int:
-        """
-        Calculate number of steps per epoch from TFRecord file.
+        """Calculates the number of steps per epoch for a given dataset.
+
+        This is determined by counting the total number of records in the
+        TFRecord file and dividing by the batch size.
 
         Args:
-            tfrecord_path: Path to TFRecord file
+            tfrecord_path: The path to the `.tfrecord` file.
 
         Returns:
-            Number of steps per epoch
+            The integer number of steps (batches) per epoch.
         """
         # Count records in TFRecord file
         dataset = tf.data.TFRecordDataset(tfrecord_path)
@@ -280,17 +323,25 @@ class SignLanguageTrainer:
               val_tfrecord: str,
               epochs: int,
               save_dir: str) -> Dict[str, Any]:
-        """
-        Train the sign language classification model.
+        """Orchestrates the model training process.
+
+        This method performs the following steps:
+        1. Loads the training and validation datasets.
+        2. Calculates the number of steps per epoch for each dataset.
+        3. Builds and compiles the model.
+        4. Sets up the training callbacks.
+        5. Calls `model.fit` to run the training loop.
+        6. Saves the training history to a JSON file.
 
         Args:
-            train_tfrecord: Path to training TFRecord file
-            val_tfrecord: Path to validation TFRecord file
-            epochs: Number of training epochs
-            save_dir: Directory to save model and logs
+            train_tfrecord: The path to the training `.tfrecord` file.
+            val_tfrecord: The path to the validation `.tfrecord` file.
+            epochs: The total number of epochs to train for.
+            save_dir: The directory to save the model and training logs.
 
         Returns:
-            Dictionary containing training history and metrics
+            A dictionary containing the training history, total training time,
+            and final accuracy metrics.
         """
         print("🚀 Starting Sign Language Model Training...")
         print(f"📊 Configuration:")
@@ -356,14 +407,17 @@ class SignLanguageTrainer:
         }
 
     def evaluate(self, test_tfrecord: str) -> Dict[str, float]:
-        """
-        Evaluate the trained model on test dataset.
+        """Evaluates the trained model on the test dataset.
 
         Args:
-            test_tfrecord: Path to test TFRecord file
+            test_tfrecord: The path to the test `.tfrecord` file.
 
         Returns:
-            Dictionary containing evaluation metrics
+            A dictionary containing the evaluation metrics (e.g., loss,
+            accuracy, top_3_accuracy).
+
+        Raises:
+            ValueError: If the model has not been trained yet.
         """
         if self.model is None:
             raise ValueError("Model not trained yet. Call train() first.")
@@ -389,12 +443,12 @@ class SignLanguageTrainer:
         return test_results
 
     def print_training_summary(self, results: Dict[str, Any], test_results: Optional[Dict[str, float]] = None):
-        """
-        Print comprehensive training summary.
+        """Prints a formatted summary of the training and evaluation results.
 
         Args:
-            results: Training results from train() method
-            test_results: Optional test results from evaluate() method
+            results: The dictionary returned by the `train` method.
+            test_results: An optional dictionary of test results from the
+                `evaluate` method.
         """
         print("\n" + "=" * 60)
         print("🎯 TRAINING SUMMARY")
@@ -423,7 +477,11 @@ class SignLanguageTrainer:
 
 
 def main():
-    """Main training pipeline with CLI argument parsing."""
+    """Main function to run the training pipeline from the command line.
+
+    Parses command-line arguments, initializes the `SignLanguageTrainer`,
+    runs the training and evaluation processes, and prints a final summary.
+    """
 
     parser = argparse.ArgumentParser(
         description="Production-Grade Sign Language Translator Trainer",

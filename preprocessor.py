@@ -24,7 +24,22 @@ from dataclasses import dataclass
 
 @dataclass
 class PreprocessConfig:
-    """Configuration class for preprocessing parameters."""
+    """Configuration class for preprocessing parameters.
+
+    Attributes:
+        dataset_path: Path to the root of the input dataset.
+        output_path: Path where the processed data (TFRecords) will be saved.
+        img_size: The target square size for images after resizing.
+        frame_rate: The desired frames per second to extract from video files.
+        batch_size: The number of items to process in a single batch.
+        train_split: The proportion of the dataset to allocate for training.
+        val_split: The proportion of the dataset to allocate for validation.
+        test_split: The proportion of the dataset to allocate for testing.
+        augmentation: A flag to enable or disable data augmentation.
+        rotation_range: The range (in degrees) for random rotations during augmentation.
+        brightness_range: The range for random brightness adjustments.
+        crop_zoom_range: The range for random cropping and zooming.
+    """
     dataset_path: str
     output_path: str
     img_size: int = 224
@@ -40,9 +55,24 @@ class PreprocessConfig:
 
 
 class MediaPipeHandDetector:
-    """MediaPipe hand detection wrapper with optimized settings."""
+    """A wrapper for MediaPipe Hands to detect and process hand landmarks.
+
+    This class initializes the MediaPipe Hands solution and provides a simple
+    interface to detect hands in an image, crop the hand region, and extract
+    normalized 2D landmarks.
+
+    Attributes:
+        mp_hands: The MediaPipe hands solution.
+        hands: The Hands processing object from MediaPipe.
+    """
 
     def __init__(self, confidence: float = 0.5, max_hands: int = 2):
+        """Initializes the MediaPipeHandDetector.
+
+        Args:
+            confidence: The minimum detection confidence for a hand to be detected.
+            max_hands: The maximum number of hands to detect.
+        """
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=True,
@@ -52,14 +82,20 @@ class MediaPipeHandDetector:
         )
 
     def detect(self, image: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """
-        Detect hands and return cropped hand region with landmarks.
+        """Detects hands in an image and extracts landmarks and a cropped image.
+
+        Processes a BGR image, detects the most prominent hand, calculates its
+        bounding box, crops the hand region with padding, and extracts the
+        normalized 2D landmarks.
 
         Args:
-            image: Input image (BGR format)
+            image: The input image in BGR format.
 
         Returns:
-            Tuple of (cropped_hand_image, landmarks_2d) or None if no hands detected
+            A tuple containing:
+            - cropped_hand: A numpy array of the cropped hand region.
+            - landmarks_2d: A numpy array of normalized 2D hand landmarks.
+            Returns None if no hands are detected.
         """
         # Convert BGR to RGB for MediaPipe
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -100,21 +136,33 @@ class MediaPipeHandDetector:
 
 
 class ImageProcessor:
-    """Image preprocessing pipeline with augmentation."""
+    """Handles image preprocessing, including resizing, augmentation, and normalization.
+
+    This class encapsulates the logic for preparing images for model training.
+    It can apply a series of augmentations like rotation, brightness adjustment,
+    and zooming.
+
+    Attributes:
+        config: A PreprocessConfig object containing preprocessing parameters.
+    """
 
     def __init__(self, config: PreprocessConfig):
+        """Initializes the ImageProcessor.
+
+        Args:
+            config: A PreprocessConfig object with settings for image processing.
+        """
         self.config = config
 
     def preprocess(self, image: np.ndarray, augment: bool = False) -> np.ndarray:
-        """
-        Preprocess image: resize, normalize, and optionally augment.
+        """Resizes, optionally augments, and normalizes an image.
 
         Args:
-            image: Input image
-            augment: Whether to apply data augmentation
+            image: The input image as a numpy array.
+            augment: If True, applies data augmentation based on the config.
 
         Returns:
-            Preprocessed image
+            The preprocessed image, resized and normalized to a [0, 1] float range.
         """
         # Resize to target size
         image = cv2.resize(image, (self.config.img_size, self.config.img_size))
@@ -128,7 +176,17 @@ class ImageProcessor:
         return image
 
     def _augment(self, image: np.ndarray) -> np.ndarray:
-        """Apply data augmentation transformations."""
+        """Applies a series of random augmentations to an image.
+
+        The augmentations include random rotation, brightness adjustment, and
+        cropping/zooming, based on the ranges specified in the configuration.
+
+        Args:
+            image: The input image to augment.
+
+        Returns:
+            The augmented image.
+        """
         h, w = image.shape[:2]
 
         # Random rotation (±rotation_range degrees)
@@ -159,20 +217,34 @@ class ImageProcessor:
 
 
 class VideoProcessor:
-    """Video processing for extracting frames at specified frame rate."""
+    """Extracts frames from video files at a specified frame rate.
+
+    Attributes:
+        config: A PreprocessConfig object with settings for frame extraction.
+    """
+
+to extract frames from.
+    """
 
     def __init__(self, config: PreprocessConfig):
+        """Initializes the VideoProcessor.
+
+        Args:
+            config: A PreprocessConfig object containing the target frame rate.
+        """
         self.config = config
 
     def extract_frames(self, video_path: str) -> Generator[np.ndarray, None, None]:
-        """
-        Extract frames from video at specified frame rate.
+        """Yields frames from a video file at a specified rate.
+
+        Opens a video file and reads it frame by frame, yielding frames at an
+        interval calculated to match the desired frame rate.
 
         Args:
-            video_path: Path to video file
+            video_path: The path to the video file.
 
         Yields:
-            Video frames as numpy arrays
+            Frames from the video as numpy arrays (in BGR format).
         """
         cap = cv2.VideoCapture(video_path)
 
@@ -203,25 +275,46 @@ class VideoProcessor:
 
 
 class TFRecordWriter:
-    """TFRecord writer for efficient data storage."""
+    """A utility class for creating and writing TFRecord examples."""
 
     @staticmethod
-    def _bytes_feature(value):
-        """Returns a bytes_list from a string / byte."""
+    def _bytes_feature(value: Union[bytes, tf.Tensor]) -> tf.train.Feature:
+        """Creates a tf.train.Feature from a byte string.
+
+        Args:
+            value: The byte string or TensorFlow tensor to encode.
+
+        Returns:
+            A tf.train.Feature containing the bytes list.
+        """
         if isinstance(value, type(tf.constant(0))):
             value = value.numpy()
         return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
     @staticmethod
-    def _float_feature(value):
-        """Returns a float_list from a float / double."""
+    def _float_feature(value: Union[float, List[float], np.ndarray]) -> tf.train.Feature:
+        """Creates a tf.train.Feature from a float or list of floats.
+
+        Args:
+            value: The float or list/array of floats to encode.
+
+        Returns:
+            A tf.train.Feature containing the float list.
+        """
         if not isinstance(value, (list, np.ndarray)):
             value = [value]
         return tf.train.Feature(float_list=tf.train.FloatList(value=value))
 
     @staticmethod
-    def _int64_feature(value):
-        """Returns an int64_list from a bool / enum / int / uint."""
+    def _int64_feature(value: Union[int, List[int], np.ndarray]) -> tf.train.Feature:
+        """Creates a tf.train.Feature from an integer or list of integers.
+
+        Args:
+            value: The integer or list/array of integers to encode.
+
+        Returns:
+            A tf.train.Feature containing the int64 list.
+        """
         if not isinstance(value, (list, np.ndarray)):
             value = [value]
         return tf.train.Feature(int64_list=tf.train.Int64List(value=value))
@@ -229,7 +322,17 @@ class TFRecordWriter:
     @staticmethod
     def create_example(image: np.ndarray, landmarks: np.ndarray,
                        label: int, label_text: str) -> tf.train.Example:
-        """Create a TFRecord example."""
+        """Creates a tf.train.Example proto from image, landmarks, and label.
+
+        Args:
+            image: The preprocessed image data (as a float array in [0, 1]).
+            landmarks: The hand landmarks associated with the image.
+            label: The integer label for the class.
+            label_text: The string representation of the label.
+
+        Returns:
+            A tf.train.Example containing the encoded features.
+        """
         # Encode image as PNG
         _, encoded_image = cv2.imencode('.png', (image * 255).astype(np.uint8))
         encoded_image = encoded_image.tobytes()
@@ -245,18 +348,24 @@ class TFRecordWriter:
 
 
 class DatasetDetector:
-    """Automatically detect dataset type (images vs videos)."""
+    """A utility to automatically detect the type of a dataset (images or videos)."""
 
     @staticmethod
     def detect_dataset_type(dataset_path: str) -> str:
-        """
-        Detect if dataset contains images or videos.
+        """Determines if a dataset consists of images or videos.
+
+        Scans the files in the given directory and its subdirectories, counting
+        common image and video file extensions to infer the dataset type.
 
         Args:
-            dataset_path: Path to dataset
+            dataset_path: The path to the dataset directory.
 
         Returns:
-            'images' or 'videos'
+            'videos' if video files are more numerous, 'images' if image
+            files are more numerous.
+
+        Raises:
+            ValueError: If no supported image or video files are found.
         """
         dataset_path = Path(dataset_path)
 
@@ -285,9 +394,33 @@ class DatasetDetector:
 
 
 class SignLanguagePreprocessor:
-    """Main preprocessor class orchestrating the entire pipeline."""
+    """Orchestrates the end-to-end sign language dataset preprocessing pipeline.
+
+    This class manages the entire workflow:
+    1. Detects the dataset type (images or videos).
+    2. Gathers file paths and creates a class-to-integer mapping.
+    3. Splits the data into training, validation, and test sets.
+    4. Processes each data split in batches, handling both images and videos.
+    5. For each item, it detects hands, extracts landmarks, preprocesses the image,
+       and applies augmentation to the training set.
+    6. Writes the processed data into TFRecord files for efficient loading.
+    7. Saves a `metadata.json` file with details about the preprocessing run.
+
+    Attributes:
+        config: A PreprocessConfig object with all preprocessing settings.
+        hand_detector: An instance of MediaPipeHandDetector.
+        image_processor: An instance of ImageProcessor.
+        video_processor: An instance of VideoProcessor.
+        stats: A dictionary to keep track of processing statistics.
+        logger: A logger for logging progress and warnings.
+    """
 
     def __init__(self, config: PreprocessConfig):
+        """Initializes the SignLanguagePreprocessor.
+
+        Args:
+            config: A PreprocessConfig object containing all settings.
+        """
         self.config = config
         self.hand_detector = MediaPipeHandDetector()
         self.image_processor = ImageProcessor(config)
@@ -302,13 +435,28 @@ class SignLanguagePreprocessor:
         self.logger = logging.getLogger(__name__)
 
     def _get_class_mapping(self, dataset_path: str) -> Dict[str, int]:
-        """Create class name to integer mapping."""
+        """Creates a mapping from class names (directory names) to integer labels.
+
+        Args:
+            dataset_path: The path to the dataset directory.
+
+        Returns:
+            A dictionary mapping class names to unique integer labels.
+        """
         dataset_path = Path(dataset_path)
         classes = sorted([d.name for d in dataset_path.iterdir() if d.is_dir()])
         return {class_name: idx for idx, class_name in enumerate(classes)}
 
     def _split_data_paths(self, all_paths: List[Tuple[str, str]]) -> Dict[str, List[Tuple[str, str]]]:
-        """Split data paths into train/val/test sets."""
+        """Shuffles and splits a list of file paths into train, validation, and test sets.
+
+        Args:
+            all_paths: A list of tuples, where each tuple contains a file path and its class name.
+
+        Returns:
+            A dictionary with keys 'train', 'val', and 'test', each containing a
+            list of file path tuples.
+        """
         np.random.shuffle(all_paths)
 
         n_total = len(all_paths)
@@ -325,7 +473,18 @@ class SignLanguagePreprocessor:
 
     def _process_batch(self, batch_data: List[Tuple[np.ndarray, int, str]],
                        writer: tf.io.TFRecordWriter, split_name: str):
-        """Process a batch of data and write to TFRecord."""
+        """Processes a batch of images and writes the results to a TFRecord file.
+
+        For each image in the batch, it detects hands, preprocesses the cropped
+        hand image (with augmentation for the training set), and writes the
+        resulting features to the TFRecord file.
+
+        Args:
+            batch_data: A list of tuples, each containing an image, its integer
+                        label, and its string label.
+            writer: The TFRecordWriter to write the examples to.
+            split_name: The name of the data split (e.g., 'train') being processed.
+        """
         for image, label, label_text in batch_data:
             try:
                 # Detect hands and get landmarks
@@ -355,7 +514,17 @@ class SignLanguagePreprocessor:
 
     def _process_images(self, file_paths: List[Tuple[str, str]],
                         class_mapping: Dict[str, int], split_name: str):
-        """Process image dataset."""
+        """Processes a list of image files and saves them to a TFRecord file.
+
+        It reads images, groups them into batches, and uses `_process_batch`
+        to handle the processing and writing.
+
+        Args:
+            file_paths: A list of tuples, each containing an image file path
+                        and its class name.
+            class_mapping: A dictionary mapping class names to integer labels.
+            split_name: The name of the data split.
+        """
         output_path = Path(self.config.output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -394,7 +563,17 @@ class SignLanguagePreprocessor:
 
     def _process_videos(self, file_paths: List[Tuple[str, str]],
                         class_mapping: Dict[str, int], split_name: str):
-        """Process video dataset."""
+        """Processes a list of video files and saves the frames to a TFRecord file.
+
+        It extracts frames from each video, groups them into batches, and uses
+        `_process_batch` to handle the processing and writing.
+
+        Args:
+            file_paths: A list of tuples, each containing a video file path
+                        and its class name.
+            class_mapping: A dictionary mapping class names to integer labels.
+            split_name: The name of the data split.
+        """
         output_path = Path(self.config.output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
@@ -430,7 +609,11 @@ class SignLanguagePreprocessor:
                 self._process_batch(batch_data, writer, split_name)
 
     def preprocess_dataset(self):
-        """Main preprocessing pipeline."""
+        """Executes the main preprocessing pipeline.
+
+        This method coordinates the entire process from detecting the dataset type
+        to processing all data splits and saving the final artifacts.
+        """
         start_time = time.time()
 
         self.logger.info("Starting sign language dataset preprocessing...")
@@ -487,7 +670,15 @@ class SignLanguagePreprocessor:
         self._log_final_stats(start_time)
 
     def _save_metadata(self, class_mapping: Dict[str, int], data_splits: Dict[str, List]):
-        """Save dataset metadata to JSON file."""
+        """Saves metadata about the preprocessing run to a JSON file.
+
+        The metadata includes dataset info, class mappings, data split counts,
+        and processing statistics.
+
+        Args:
+            class_mapping: The mapping from class names to integer labels.
+            data_splits: A dictionary containing the file paths for each data split.
+        """
         # Count samples per class per split
         class_counts = defaultdict(lambda: defaultdict(int))
 
@@ -517,7 +708,12 @@ class SignLanguagePreprocessor:
         self.logger.info(f"Metadata saved to: {metadata_path}")
 
     def _log_final_stats(self, start_time: float):
-        """Log final processing statistics."""
+        """Logs a summary of the preprocessing statistics to the console.
+
+        Args:
+            start_time: The time at which the preprocessing started, used to
+                        calculate the total elapsed time.
+        """
         elapsed = time.time() - start_time
 
         self.logger.info("=" * 50)
@@ -529,8 +725,12 @@ class SignLanguagePreprocessor:
             self.logger.info(f"{key}: {value}")
 
 
-def parse_args():
-    """Parse command line arguments."""
+def parse_args() -> argparse.Namespace:
+    """Parses command-line arguments for the preprocessor script.
+
+    Returns:
+        An argparse.Namespace object containing the parsed arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Sign Language Dataset Preprocessor",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -571,7 +771,11 @@ Examples:
 
 
 def main():
-    """Main function to run the preprocessor."""
+    """The main entry point for the preprocessor script.
+
+    Parses command-line arguments, sets up the configuration, and runs the
+    SignLanguagePreprocessor.
+    """
     args = parse_args()
 
     # Validate splits sum to 1.0
