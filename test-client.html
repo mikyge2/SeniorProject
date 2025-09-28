@@ -146,6 +146,8 @@
             position: absolute;
             top: 0;
             left: 0;
+            width: 100%;
+            height: 100%;
             pointer-events: none;
             border-radius: 10px;
         }
@@ -339,6 +341,45 @@
             transform: translateX(26px);
         }
 
+        .hold-time-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.3);
+            outline: none;
+            margin: 0 10px;
+            width: 100px;
+        }
+
+        .hold-time-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .hold-time-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            cursor: pointer;
+            border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        #holdTimeValue {
+            font-weight: bold;
+            color: #4CAF50;
+            min-width: 35px;
+            display: inline-block;
+        }
+
         .stats {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -415,6 +456,12 @@
                     <span class="slider"></span>
                 </label>
             </div>
+            <div class="toggle-group">
+                <span>Hold Time:</span>
+                <input type="range" id="holdTimeSlider" min="0.5" max="3.0" step="0.1" value="0.8"
+                       style="margin: 0 10px; width: 100px;">
+                <span id="holdTimeValue">0.8s</span>
+            </div>
         </div>
 
         <!-- Controls -->
@@ -454,6 +501,10 @@
             <div class="stat-card">
                 <div class="stat-value" id="wordsCompleted">0</div>
                 <div class="stat-label">Words Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="currentHoldTime">0.8s</div>
+                <div class="stat-label">Hold Time</div>
             </div>
         </div>
 
@@ -532,6 +583,7 @@
         let showLandmarks = true;
         let showAmharic = true;
         let showSuggestions = true;
+        let currentHoldTime = 0.8; // Default hold time in seconds
 
         function log(message) {
             const consoleEl = document.getElementById('console');
@@ -564,6 +616,7 @@
         function setupToggles() {
             document.getElementById('landmarksToggle').addEventListener('change', function() {
                 showLandmarks = this.checked;
+                log(`Hand landmarks: ${showLandmarks ? 'ON' : 'OFF'}`);
                 if (!showLandmarks && landmarkCtx) {
                     landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
                 }
@@ -571,12 +624,48 @@
 
             document.getElementById('amharicToggle').addEventListener('change', function() {
                 showAmharic = this.checked;
+                log(`Amharic translation: ${showAmharic ? 'ON' : 'OFF'}`);
+
+                // Update existing completed words display
+                updateCompletedWordsDisplay();
             });
 
             document.getElementById('suggestionsToggle').addEventListener('change', function() {
                 showSuggestions = this.checked;
+                log(`Word suggestions: ${showSuggestions ? 'ON' : 'OFF'}`);
                 document.getElementById('suggestionsCard').style.display =
                     this.checked ? 'block' : 'none';
+            });
+
+            // Setup hold time slider
+            const holdTimeSlider = document.getElementById('holdTimeSlider');
+            const holdTimeValue = document.getElementById('holdTimeValue');
+
+            holdTimeSlider.addEventListener('input', function() {
+                currentHoldTime = parseFloat(this.value);
+                holdTimeValue.textContent = currentHoldTime.toFixed(1) + 's';
+                document.getElementById('currentHoldTime').textContent = currentHoldTime.toFixed(1) + 's';
+                log(`Hold time updated: ${currentHoldTime.toFixed(1)}s`);
+
+                // Send updated hold time to server if connected
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'config',
+                        data: {
+                            hold_time: currentHoldTime
+                        }
+                    }));
+                }
+            });
+
+            holdTimeSlider.className = 'hold-time-slider';
+        }
+
+        function updateCompletedWordsDisplay() {
+            // Get all completed word elements and update Amharic display
+            const completedWords = document.querySelectorAll('.completed-word .amharic-text');
+            completedWords.forEach(amharicEl => {
+                amharicEl.style.display = showAmharic ? 'block' : 'none';
             });
         }
 
@@ -631,7 +720,8 @@
 
                         // Handle completed words
                         if (data.word_completed) {
-                            addCompletedWord(data.word_completed, data.amharic_translation);
+                            const translation = showAmharic ? data.amharic_translation : null;
+                            addCompletedWord(data.word_completed, translation);
                             wordsCompletedCount++;
                         }
 
@@ -645,6 +735,8 @@
                         log(`Server error: ${response.message}`);
                     } else if (response.type === 'reset_confirmed') {
                         log('Word tracker reset confirmed');
+                    } else if (response.type === 'config_updated') {
+                        log(`Configuration updated: ${response.message}`);
                     }
 
                 } catch (error) {
@@ -679,6 +771,7 @@
                 landmarkCanvas = document.getElementById('landmarkCanvas');
                 landmarkCtx = landmarkCanvas.getContext('2d');
 
+                // Get video stream first
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         width: 480,
@@ -689,31 +782,30 @@
 
                 video.srcObject = stream;
 
-                // Initialize MediaPipe Hands
-                hands = new Hands({
-                    locateFile: (file) => {
-                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+                // Wait for video to be ready
+                video.onloadedmetadata = () => {
+                    // Initialize MediaPipe after video is ready
+                    if (typeof Hands !== 'undefined') {
+                        hands = new Hands({
+                            locateFile: (file) => {
+                                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
+                            }
+                        });
+
+                        hands.setOptions({
+                            maxNumHands: 1,
+                            modelComplexity: 0,
+                            minDetectionConfidence: 0.5,
+                            minTrackingConfidence: 0.5
+                        });
+
+                        hands.onResults(onHandResults);
+
+                        log('Camera and MediaPipe hands initialized');
+                    } else {
+                        log('MediaPipe not available - landmarks disabled');
                     }
-                });
-
-                hands.setOptions({
-                    maxNumHands: 1,
-                    modelComplexity: 1,
-                    minDetectionConfidence: 0.5,
-                    minTrackingConfidence: 0.5
-                });
-
-                hands.onResults(onHandResults);
-
-                camera = new Camera(video, {
-                    onFrame: async () => {
-                        if (showLandmarks) {
-                            await hands.send({image: video});
-                        }
-                    },
-                    width: 480,
-                    height: 360
-                });
+                };
 
                 log('Camera started');
 
@@ -723,19 +815,51 @@
         }
 
         function onHandResults(results) {
-            if (!showLandmarks) return;
+            if (!showLandmarks || !landmarkCtx) return;
 
-            landmarkCtx.save();
+            // Clear previous landmarks
             landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
 
-            if (results.multiHandLandmarks) {
-                for (const landmarks of results.multiHandLandmarks) {
-                    drawConnectors(landmarkCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                    drawLandmarks(landmarkCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
-                }
-            }
+            // Draw landmarks if hand is detected
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
 
-            landmarkCtx.restore();
+                // Draw simple hand landmarks without external dependencies
+                landmarkCtx.strokeStyle = '#00FF00';
+                landmarkCtx.lineWidth = 2;
+                landmarkCtx.fillStyle = '#FF0000';
+
+                // Draw landmarks as circles
+                for (let i = 0; i < landmarks.length; i++) {
+                    const x = landmarks[i].x * landmarkCanvas.width;
+                    const y = landmarks[i].y * landmarkCanvas.height;
+
+                    landmarkCtx.beginPath();
+                    landmarkCtx.arc(x, y, 3, 0, 2 * Math.PI);
+                    landmarkCtx.fill();
+                }
+
+                // Draw some key connections (simplified)
+                const connections = [
+                    [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+                    [0, 5], [5, 6], [6, 7], [7, 8], // index
+                    [0, 9], [9, 10], [10, 11], [11, 12], // middle
+                    [0, 13], [13, 14], [14, 15], [15, 16], // ring
+                    [0, 17], [17, 18], [18, 19], [19, 20] // pinky
+                ];
+
+                landmarkCtx.beginPath();
+                for (const [start, end] of connections) {
+                    const startX = landmarks[start].x * landmarkCanvas.width;
+                    const startY = landmarks[start].y * landmarkCanvas.height;
+                    const endX = landmarks[end].x * landmarkCanvas.width;
+                    const endY = landmarks[end].y * landmarkCanvas.height;
+
+                    landmarkCtx.moveTo(startX, startY);
+                    landmarkCtx.lineTo(endX, endY);
+                }
+                landmarkCtx.stroke();
+            }
         }
 
         function stopCamera() {
@@ -784,6 +908,7 @@
             log('Starting recognition...');
 
             recognitionInterval = setInterval(() => {
+                // Capture frame for ASL recognition
                 const frameData = captureFrame();
                 if (frameData && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
@@ -791,6 +916,15 @@
                         data: frameData
                     }));
                     framesSent++;
+                }
+
+                // Process landmarks separately if enabled and MediaPipe is available
+                if (showLandmarks && hands && video) {
+                    try {
+                        hands.send({image: video});
+                    } catch (error) {
+                        // Ignore MediaPipe errors to not break main recognition
+                    }
                 }
             }, 200); // 5 FPS
         }
@@ -833,8 +967,9 @@
             wordDiv.className = 'completed-word';
 
             let content = `<strong>${word.toUpperCase()}</strong>`;
-            if (showAmharic && amharicTranslation) {
-                content += `<div class="amharic-text">${amharicTranslation}</div>`;
+            if (amharicTranslation) {
+                const amharicStyle = showAmharic ? 'block' : 'none';
+                content += `<div class="amharic-text" style="display: ${amharicStyle};">${amharicTranslation}</div>`;
             }
 
             wordDiv.innerHTML = content;

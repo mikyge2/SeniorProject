@@ -34,7 +34,6 @@ from enhanced_asl_inference import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-
 # Response models
 class PredictionResponse(BaseModel):
     letter: str
@@ -47,13 +46,11 @@ class PredictionResponse(BaseModel):
     letter_progress: float
     timestamp: str
 
-
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     timestamp: str
     connections: int
-
 
 class ResetResponse(BaseModel):
     status: str
@@ -68,13 +65,13 @@ class ASLInferenceEngine:
         self.metadata_path = metadata_path
         self.enable_amharic = enable_amharic
 
-        # Initialize core inference system (headless)
+        # Initialize core inference system (with TTS enabled for API)
         self.inference_system = ASLRealTimeInference(
             model_path=model_path,
             metadata_path=metadata_path,
             camera_index=0,  # Not used in API mode
-            enable_speech=False,  # Disabled for API
-            use_google_tts=False,
+            enable_speech=True,   # Re-enabled for TTS
+            use_google_tts=True,  # Re-enabled for better TTS
             show_landmarks=False,
             enable_amharic=enable_amharic
         )
@@ -86,8 +83,7 @@ class ASLInferenceEngine:
         self.amharic_translator = None
         if enable_amharic:
             self.amharic_translator = SimpleAmharicTranslator(use_translation=True)
-            logger.info(
-                f"Amharic translation: {'Available' if self.amharic_translator.translation_available else 'Not available'}")
+            logger.info(f"Amharic translation: {'Available' if self.amharic_translator.translation_available else 'Not available'}")
 
     def _initialize_system(self):
         """Initialize the inference system components."""
@@ -161,12 +157,16 @@ class ASLInferenceEngine:
                 # Get Amharic translation if enabled
                 if self.enable_amharic and self.amharic_translator and self.amharic_translator.translation_available:
                     amharic_translation = self.amharic_translator.translate(current_word)
+                    logger.info(f"Translation: '{current_word}' -> '{amharic_translation}'")
+
+                # Handle TTS (both English and Amharic)
+                self._handle_word_completion_with_tts(current_word, amharic_translation)
 
                 # Reset word tracker for next word
                 word_tracker.reset_word()
 
                 logger.info(f"Word completed: '{word_completed}'" +
-                            (f" -> Amharic: '{amharic_translation}'" if amharic_translation else ""))
+                          (f" -> Amharic: '{amharic_translation}'" if amharic_translation else ""))
 
             return {
                 "letter": prediction,
@@ -194,6 +194,28 @@ class ASLInferenceEngine:
                 "timestamp": datetime.now().isoformat(),
                 "error": str(e)
             }
+
+    def _handle_word_completion_with_tts(self, word: str, amharic_translation: Optional[str]):
+        """Handle word completion with TTS for both English and Amharic."""
+        try:
+            # Use the original inference system's TTS if available
+            if hasattr(self.inference_system, 'tts_engine') and self.inference_system.tts_engine:
+                # Speak English word
+                self.inference_system.tts_engine.speak(word, 'en')
+                logger.info(f"Speaking English: '{word}'")
+
+                # Speak Amharic translation if available
+                if self.enable_amharic and amharic_translation:
+                    # Add delay for Amharic speech (as in original)
+                    import threading
+                    threading.Timer(1.2, lambda: self.inference_system.tts_engine.speak(amharic_translation, 'am')).start()
+                    logger.info(f"Speaking Amharic: '{amharic_translation}' (delayed)")
+            else:
+                # Fallback: try to initialize TTS if not available
+                logger.warning("TTS engine not available in inference system")
+
+        except Exception as e:
+            logger.error(f"TTS error: {e}")
 
 
 class ConnectionManager:
@@ -267,7 +289,6 @@ app.add_middleware(
 inference_engine: Optional[ASLInferenceEngine] = None
 connection_manager = ConnectionManager()
 
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize the ASL inference engine on startup."""
@@ -287,12 +308,33 @@ async def startup_event():
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
     try:
-        # Initialize inference engine
+        # Initialize inference engine with Amharic and TTS enabled
         inference_engine = ASLInferenceEngine(
             model_path=model_path,
             metadata_path=metadata_path,
             enable_amharic=True
         )
+
+        # Test translation availability
+        if inference_engine.amharic_translator:
+            if inference_engine.amharic_translator.translation_available:
+                # Test translation
+                test_translation = inference_engine.amharic_translator.translate("hello")
+                logger.info(f"Translation test: 'hello' -> '{test_translation}'")
+            else:
+                logger.error("Amharic translator failed to initialize")
+        else:
+            logger.error("Amharic translator is None")
+
+        # Test TTS availability
+        if hasattr(inference_engine.inference_system, 'tts_engine'):
+            if inference_engine.inference_system.tts_engine:
+                logger.info("TTS engine initialized successfully")
+            else:
+                logger.error("TTS engine is None")
+        else:
+            logger.error("TTS engine not found in inference system")
+
         logger.info("ASL Recognition API server started successfully")
 
     except Exception as e:
@@ -328,8 +370,8 @@ async def reset_connection(connection_id: str):
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_rest(
-        file: UploadFile = File(...),
-        connection_id: Optional[str] = None
+    file: UploadFile = File(...),
+    connection_id: Optional[str] = None
 ):
     """
     REST endpoint for frame prediction (fallback option).
@@ -457,8 +499,7 @@ async def websocket_predict(websocket: WebSocket):
 
                     # Log performance
                     if processing_time > 200:
-                        logger.warning(
-                            f"Slow processing: {processing_time:.1f}ms for frame {connection['frame_count']}")
+                        logger.warning(f"Slow processing: {processing_time:.1f}ms for frame {connection['frame_count']}")
 
                 elif data.get("type") == "reset":
                     # Reset word tracker
@@ -469,6 +510,26 @@ async def websocket_predict(websocket: WebSocket):
                             "type": "reset_confirmed",
                             "message": "Word tracker reset"
                         }))
+
+                elif data.get("type") == "config":
+                    # Update configuration settings
+                    config_data = data.get("data", {})
+                    connection = connection_manager.get_connection(connection_id)
+
+                    if connection and "hold_time" in config_data:
+                        hold_time = float(config_data["hold_time"])
+                        if 0.1 <= hold_time <= 5.0:  # Reasonable bounds
+                            connection["word_tracker"].min_letter_duration = hold_time
+                            await websocket.send_text(json.dumps({
+                                "type": "config_updated",
+                                "message": f"Hold time updated to {hold_time:.1f}s"
+                            }))
+                            logger.info(f"Hold time updated to {hold_time:.1f}s for connection {connection_id}")
+                        else:
+                            await websocket.send_text(json.dumps({
+                                "type": "error",
+                                "message": "Hold time must be between 0.1 and 5.0 seconds"
+                            }))
 
                 else:
                     await websocket.send_text(json.dumps({
@@ -522,7 +583,7 @@ async def root():
 if __name__ == "__main__":
     # For development - use uvicorn command for production
     uvicorn.run(
-        "FASTAPIBackend:app",
+        "main:app",
         host="0.0.0.0",
         port=8000,
         reload=True,
