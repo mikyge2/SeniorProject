@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ASL Recognition Test Client</title>
+    <title>ASL Recognition - Enhanced Client</title>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
@@ -19,7 +19,7 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 20px;
         }
@@ -35,6 +35,15 @@
             text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
         }
 
+        .version-badge {
+            display: inline-block;
+            background: linear-gradient(45deg, #FF9800, #F57C00);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.8em;
+            margin-top: 5px;
+        }
+
         .status {
             padding: 15px;
             margin: 10px 0;
@@ -44,6 +53,10 @@
             font-size: 1.1em;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
         }
 
         .status.connected {
@@ -53,6 +66,10 @@
 
         .status.disconnected {
             background: linear-gradient(45deg, #f44336, #d32f2f);
+        }
+
+        .status-icon {
+            font-size: 1.2em;
         }
 
         @keyframes pulse {
@@ -94,15 +111,21 @@
             background: linear-gradient(45deg, #2196F3, #1976D2);
             color: white;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: calc(100% - 10px);
         }
 
-        button:hover {
+        button:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 6px 12px rgba(0,0,0,0.2);
         }
 
-        button:active {
+        button:active:not(:disabled) {
             transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         button.success { background: linear-gradient(45deg, #4CAF50, #45a049); }
@@ -136,6 +159,7 @@
             height: auto;
             border-radius: 10px;
             box-shadow: 0 8px 16px rgba(0,0,0,0.3);
+            transform: scaleX(-1);
         }
 
         #canvas {
@@ -150,6 +174,27 @@
             height: 100%;
             pointer-events: none;
             border-radius: 10px;
+            transform: scaleX(-1);
+        }
+
+        .no-sign-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(244, 67, 54, 0.9);
+            padding: 20px 30px;
+            border-radius: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        .no-sign-overlay.show {
+            opacity: 1;
         }
 
         .results-section {
@@ -178,6 +223,16 @@
             margin: 20px 0;
             text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
             animation: glow 2s ease-in-out infinite alternate;
+            min-height: 80px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .letter-display.no-sign {
+            font-size: 1.5em;
+            color: #ff9999;
+            animation: none;
         }
 
         @keyframes glow {
@@ -214,6 +269,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            letter-spacing: 3px;
         }
 
         .suggestions {
@@ -221,6 +277,7 @@
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 15px;
+            min-height: 50px;
         }
 
         .suggestion {
@@ -230,6 +287,7 @@
             cursor: pointer;
             transition: all 0.3s ease;
             font-weight: bold;
+            animation: slideIn 0.3s ease-out;
         }
 
         .suggestion:hover {
@@ -238,7 +296,7 @@
         }
 
         .completed-words {
-            max-height: 200px;
+            max-height: 250px;
             overflow-y: auto;
         }
 
@@ -341,6 +399,50 @@
             transform: translateX(26px);
         }
 
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            background: rgba(255, 255, 255, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .stat-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .fps-indicator {
+            color: #4CAF50;
+        }
+
+        .fps-indicator.low {
+            color: #FF9800;
+        }
+
+        .fps-indicator.critical {
+            color: #f44336;
+        }
+
         .hold-time-slider {
             -webkit-appearance: none;
             appearance: none;
@@ -349,7 +451,7 @@
             background: rgba(255, 255, 255, 0.3);
             outline: none;
             margin: 0 10px;
-            width: 100px;
+            width: 120px;
         }
 
         .hold-time-slider::-webkit-slider-thumb {
@@ -373,39 +475,6 @@
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
         }
 
-        #holdTimeValue {
-            font-weight: bold;
-            color: #4CAF50;
-            min-width: 35px;
-            display: inline-block;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-
-        .stat-card {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            backdrop-filter: blur(10px);
-        }
-
-        .stat-value {
-            font-size: 2em;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .stat-label {
-            font-size: 0.9em;
-            opacity: 0.8;
-        }
-
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -419,18 +488,54 @@
                 flex-direction: column;
                 align-items: center;
             }
+
+            .letter-display {
+                font-size: 3em;
+            }
+
+            .word-display {
+                font-size: 1.5em;
+            }
+        }
+
+        .session-info {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .session-item {
+            text-align: center;
+        }
+
+        .session-item .label {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+
+        .session-item .value {
+            font-size: 1.5em;
+            font-weight: bold;
         }
     </style>
 
     <!-- MediaPipe -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3.1620248257/drawing_utils.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>ASL Recognition Test Client</h1>
-            <div id="status" class="status disconnected">Disconnected</div>
+            <h1>🤟 ASL Recognition Client</h1>
+            <div class="version-badge">Enhanced v2.0</div>
+            <div id="status" class="status disconnected">
+                <span class="status-icon">⚫</span>
+                <span>Disconnected</span>
+            </div>
         </div>
 
         <!-- Settings Toggle -->
@@ -458,33 +563,32 @@
             </div>
             <div class="toggle-group">
                 <span>Hold Time:</span>
-                <input type="range" id="holdTimeSlider" min="0.5" max="3.0" step="0.1" value="0.8"
-                       style="margin: 0 10px; width: 100px;">
-                <span id="holdTimeValue">0.8s</span>
+                <input type="range" id="holdTimeSlider" class="hold-time-slider" min="0.5" max="3.0" step="0.1" value="0.8">
+                <span id="holdTimeValue" style="font-weight: bold; color: #4CAF50; min-width: 40px;">0.8s</span>
             </div>
         </div>
 
         <!-- Controls -->
         <div class="controls-grid">
             <div class="control-section">
-                <h3>Connection</h3>
-                <button onclick="connectWebSocket()" class="success">Connect</button>
-                <button onclick="disconnectWebSocket()" class="danger">Disconnect</button>
+                <h3>🔌 Connection</h3>
+                <button onclick="connectWebSocket()" class="success" id="connectBtn">Connect</button>
+                <button onclick="disconnectWebSocket()" class="danger" id="disconnectBtn">Disconnect</button>
             </div>
             <div class="control-section">
-                <h3>Camera</h3>
-                <button onclick="startCamera()" class="success">Start Camera</button>
-                <button onclick="stopCamera()" class="danger">Stop Camera</button>
+                <h3>📹 Camera</h3>
+                <button onclick="startCamera()" class="success" id="startCameraBtn">Start Camera</button>
+                <button onclick="stopCamera()" class="danger" id="stopCameraBtn">Stop Camera</button>
             </div>
             <div class="control-section">
-                <h3>Recognition</h3>
-                <button onclick="startRecognition()" class="warning">Start Recognition</button>
-                <button onclick="stopRecognition()" class="danger">Stop Recognition</button>
+                <h3>🎯 Recognition</h3>
+                <button onclick="startRecognition()" class="warning" id="startRecognitionBtn">Start Recognition</button>
+                <button onclick="stopRecognition()" class="danger" id="stopRecognitionBtn">Stop Recognition</button>
             </div>
             <div class="control-section">
-                <h3>Actions</h3>
+                <h3>⚙️ Actions</h3>
                 <button onclick="resetWord()" class="secondary">Reset Word</button>
-                <button onclick="clearLog()" class="secondary">Clear Log</button>
+                <button onclick="getSessionStats()" class="secondary">Get Stats</button>
             </div>
         </div>
 
@@ -495,6 +599,10 @@
                 <div class="stat-label">Frames Sent</div>
             </div>
             <div class="stat-card">
+                <div class="stat-value" id="fpsValue">0</div>
+                <div class="stat-label">Current FPS</div>
+            </div>
+            <div class="stat-card">
                 <div class="stat-value" id="avgProcessingTime">0</div>
                 <div class="stat-label">Avg Time (ms)</div>
             </div>
@@ -503,8 +611,12 @@
                 <div class="stat-label">Words Completed</div>
             </div>
             <div class="stat-card">
-                <div class="stat-value" id="currentHoldTime">0.8s</div>
-                <div class="stat-label">Hold Time</div>
+                <div class="stat-value" id="lettersRecognized">0</div>
+                <div class="stat-label">Letters Recognized</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="sessionDuration">0s</div>
+                <div class="stat-label">Session Duration</div>
             </div>
         </div>
 
@@ -512,11 +624,12 @@
         <div class="main-content">
             <!-- Camera Section -->
             <div class="camera-section">
-                <h3>Camera Feed</h3>
+                <h3>📹 Camera Feed</h3>
                 <div id="videoContainer">
                     <video id="video" width="480" height="360" autoplay muted playsinline></video>
                     <canvas id="canvas" width="480" height="360"></canvas>
                     <canvas id="landmarkCanvas" class="landmark-overlay" width="480" height="360"></canvas>
+                    <div id="noSignOverlay" class="no-sign-overlay">⚠️ No Sign Detected</div>
                 </div>
             </div>
 
@@ -524,8 +637,8 @@
             <div class="results-section">
                 <!-- Current Letter -->
                 <div class="result-card">
-                    <h3>Current Letter</h3>
-                    <div class="letter-display" id="letter">-</div>
+                    <h3>🔤 Current Letter</h3>
+                    <div class="letter-display" id="letterDisplay">-</div>
                     <div>Confidence: <span id="confidence">0</span>%</div>
                     <div class="confidence-bar">
                         <div class="confidence-fill" id="confidenceBar" style="width: 0%"></div>
@@ -535,21 +648,23 @@
 
                 <!-- Current Word -->
                 <div class="result-card">
-                    <h3>Current Word</h3>
+                    <h3>📝 Current Word</h3>
                     <div class="word-display" id="currentWord">-</div>
                 </div>
 
                 <!-- Word Suggestions -->
                 <div class="result-card" id="suggestionsCard">
-                    <h3>Word Suggestions</h3>
-                    <div class="suggestions" id="suggestions"></div>
+                    <h3>💡 Smart Suggestions</h3>
+                    <div class="suggestions" id="suggestions">
+                        <div style="opacity: 0.5; width: 100%; text-align: center;">Start signing to see suggestions</div>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Completed Words -->
         <div class="result-card">
-            <h3>Completed Words</h3>
+            <h3>✅ Completed Words</h3>
             <div class="completed-words" id="completedWords">
                 <div style="text-align: center; opacity: 0.7;">No words completed yet</div>
             </div>
@@ -557,7 +672,7 @@
 
         <!-- Console Log -->
         <div class="result-card">
-            <h3>Console Log</h3>
+            <h3>📋 Console Log</h3>
             <div class="console-log" id="console"></div>
         </div>
     </div>
@@ -572,23 +687,25 @@
         let isRecognizing = false;
         let recognitionInterval = null;
         let hands = null;
-        let camera = null;
 
         // Statistics
         let framesSent = 0;
         let processingTimes = [];
         let wordsCompletedCount = 0;
+        let lettersRecognizedCount = 0;
+        let sessionStartTime = null;
 
         // Settings
         let showLandmarks = true;
         let showAmharic = true;
         let showSuggestions = true;
-        let currentHoldTime = 0.8; // Default hold time in seconds
+        let currentHoldTime = 0.8;
 
-        function log(message) {
+        function log(message, type = 'info') {
             const consoleEl = document.getElementById('console');
             const timestamp = new Date().toLocaleTimeString();
-            consoleEl.innerHTML += `[${timestamp}] ${message}<br>`;
+            const icon = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
+            consoleEl.innerHTML += `[${timestamp}] ${icon} ${message}<br>`;
             consoleEl.scrollTop = consoleEl.scrollHeight;
         }
 
@@ -596,27 +713,39 @@
             const status = document.getElementById('status');
             if (connected) {
                 status.className = 'status connected';
-                status.textContent = 'Connected to WebSocket';
+                status.innerHTML = '<span class="status-icon">🟢</span><span>Connected to Server</span>';
             } else {
                 status.className = 'status disconnected';
-                status.textContent = 'Disconnected';
+                status.innerHTML = '<span class="status-icon">⚫</span><span>Disconnected</span>';
             }
         }
 
-        function updateStats() {
+        function updateStats(data) {
             document.getElementById('frameCount').textContent = framesSent;
             document.getElementById('wordsCompleted').textContent = wordsCompletedCount;
+            document.getElementById('lettersRecognized').textContent = lettersRecognizedCount;
+
+            if (data && data.fps) {
+                const fpsEl = document.getElementById('fpsValue');
+                fpsEl.textContent = data.fps;
+                fpsEl.className = data.fps > 3 ? 'fps-indicator' : data.fps > 1 ? 'fps-indicator low' : 'fps-indicator critical';
+            }
 
             if (processingTimes.length > 0) {
                 const avg = processingTimes.reduce((a, b) => a + b, 0) / processingTimes.length;
                 document.getElementById('avgProcessingTime').textContent = Math.round(avg);
+            }
+
+            if (sessionStartTime) {
+                const duration = Math.floor((Date.now() - sessionStartTime) / 1000);
+                document.getElementById('sessionDuration').textContent = duration + 's';
             }
         }
 
         function setupToggles() {
             document.getElementById('landmarksToggle').addEventListener('change', function() {
                 showLandmarks = this.checked;
-                log(`Hand landmarks: ${showLandmarks ? 'ON' : 'OFF'}`);
+                log(`Hand landmarks ${showLandmarks ? 'enabled' : 'disabled'}`);
                 if (!showLandmarks && landmarkCtx) {
                     landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
                 }
@@ -624,45 +753,34 @@
 
             document.getElementById('amharicToggle').addEventListener('change', function() {
                 showAmharic = this.checked;
-                log(`Amharic translation: ${showAmharic ? 'ON' : 'OFF'}`);
-
-                // Update existing completed words display
+                log(`Amharic translation ${showAmharic ? 'enabled' : 'disabled'}`);
                 updateCompletedWordsDisplay();
             });
 
             document.getElementById('suggestionsToggle').addEventListener('change', function() {
                 showSuggestions = this.checked;
-                log(`Word suggestions: ${showSuggestions ? 'ON' : 'OFF'}`);
-                document.getElementById('suggestionsCard').style.display =
-                    this.checked ? 'block' : 'none';
+                log(`Word suggestions ${showSuggestions ? 'enabled' : 'disabled'}`);
+                document.getElementById('suggestionsCard').style.display = this.checked ? 'block' : 'none';
             });
 
-            // Setup hold time slider
             const holdTimeSlider = document.getElementById('holdTimeSlider');
             const holdTimeValue = document.getElementById('holdTimeValue');
 
             holdTimeSlider.addEventListener('input', function() {
                 currentHoldTime = parseFloat(this.value);
                 holdTimeValue.textContent = currentHoldTime.toFixed(1) + 's';
-                document.getElementById('currentHoldTime').textContent = currentHoldTime.toFixed(1) + 's';
-                log(`Hold time updated: ${currentHoldTime.toFixed(1)}s`);
 
-                // Send updated hold time to server if connected
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
                         type: 'config',
-                        data: {
-                            hold_time: currentHoldTime
-                        }
+                        data: { hold_time: currentHoldTime }
                     }));
+                    log(`Hold time updated to ${currentHoldTime.toFixed(1)}s`, 'success');
                 }
             });
-
-            holdTimeSlider.className = 'hold-time-slider';
         }
 
         function updateCompletedWordsDisplay() {
-            // Get all completed word elements and update Amharic display
             const completedWords = document.querySelectorAll('.completed-word .amharic-text');
             completedWords.forEach(amharicEl => {
                 amharicEl.style.display = showAmharic ? 'block' : 'none';
@@ -671,15 +789,16 @@
 
         function connectWebSocket() {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                log('Already connected');
+                log('Already connected', 'error');
                 return;
             }
 
             ws = new WebSocket('ws://localhost:8000/ws/predict');
 
             ws.onopen = function() {
-                log('WebSocket connected');
+                log('WebSocket connected successfully', 'success');
                 updateStatus(true);
+                sessionStartTime = Date.now();
             };
 
             ws.onmessage = function(event) {
@@ -687,72 +806,115 @@
                     const response = JSON.parse(event.data);
 
                     if (response.type === 'prediction') {
-                        const data = response.data;
-
-                        // Update UI
-                        document.getElementById('letter').textContent = data.letter || '-';
-                        const confidence = Math.round(data.confidence * 100);
-                        document.getElementById('confidence').textContent = confidence;
-                        document.getElementById('confidenceBar').style.width = confidence + '%';
-                        document.getElementById('currentWord').textContent = data.current_word || '-';
-                        document.getElementById('progress').textContent = Math.round(data.letter_progress * 100);
-
-                        // Update suggestions
-                        if (showSuggestions && data.word_suggestions) {
-                            const suggestionsEl = document.getElementById('suggestions');
-                            suggestionsEl.innerHTML = '';
-                            data.word_suggestions.slice(0, 3).forEach((suggestion, index) => {
-                                const suggestionEl = document.createElement('div');
-                                suggestionEl.className = 'suggestion';
-                                suggestionEl.textContent = suggestion.toUpperCase();
-                                suggestionEl.onclick = () => selectSuggestion(suggestion);
-                                suggestionsEl.appendChild(suggestionEl);
-                            });
-                        }
-
-                        // Track processing time
-                        if (data.processing_time_ms) {
-                            processingTimes.push(data.processing_time_ms);
-                            if (processingTimes.length > 100) {
-                                processingTimes.shift(); // Keep only last 100
-                            }
-                        }
-
-                        // Handle completed words
-                        if (data.word_completed) {
-                            const translation = showAmharic ? data.amharic_translation : null;
-                            addCompletedWord(data.word_completed, translation);
-                            wordsCompletedCount++;
-                        }
-
-                        updateStats();
-
-                        if (data.error) {
-                            log(`Error: ${data.error}`);
-                        }
-
+                        handlePrediction(response.data);
                     } else if (response.type === 'error') {
-                        log(`Server error: ${response.message}`);
+                        log(`Server error: ${response.message}`, 'error');
                     } else if (response.type === 'reset_confirmed') {
-                        log('Word tracker reset confirmed');
+                        log('Word tracker reset', 'success');
                     } else if (response.type === 'config_updated') {
-                        log(`Configuration updated: ${response.message}`);
+                        log(response.message, 'success');
+                    } else if (response.type === 'stats') {
+                        displaySessionStats(response.data);
                     }
 
                 } catch (error) {
-                    log(`Failed to parse message: ${error}`);
+                    log(`Failed to parse message: ${error}`, 'error');
                 }
             };
 
             ws.onerror = function(error) {
-                log(`WebSocket error: ${error}`);
+                log(`WebSocket error`, 'error');
             };
 
             ws.onclose = function() {
-                log('WebSocket disconnected');
+                log('WebSocket disconnected', 'error');
                 updateStatus(false);
                 ws = null;
+                sessionStartTime = null;
             };
+        }
+
+        function handlePrediction(data) {
+            // NEW: Handle "no sign detected" state
+            const letterDisplay = document.getElementById('letterDisplay');
+            const noSignOverlay = document.getElementById('noSignOverlay');
+
+            if (!data.is_sign_detected) {
+                letterDisplay.textContent = 'No Sign Detected';
+                letterDisplay.className = 'letter-display no-sign';
+                noSignOverlay.classList.add('show');
+            } else {
+                letterDisplay.textContent = data.letter || '-';
+                letterDisplay.className = 'letter-display';
+                noSignOverlay.classList.remove('show');
+                lettersRecognizedCount++;
+            }
+
+            // Update confidence
+            const confidence = Math.round(data.confidence * 100);
+            document.getElementById('confidence').textContent = confidence;
+            document.getElementById('confidenceBar').style.width = confidence + '%';
+
+            // Update current word
+            document.getElementById('currentWord').textContent = data.current_word || '-';
+            document.getElementById('progress').textContent = Math.round(data.letter_progress * 100);
+
+            // Update suggestions (enhanced from server)
+            if (showSuggestions && data.word_suggestions && data.word_suggestions.length > 0) {
+                const suggestionsEl = document.getElementById('suggestions');
+                suggestionsEl.innerHTML = '';
+                data.word_suggestions.forEach(suggestion => {
+                    const suggestionEl = document.createElement('div');
+                    suggestionEl.className = 'suggestion';
+                    suggestionEl.textContent = suggestion.toUpperCase();
+                    suggestionEl.onclick = () => selectSuggestion(suggestion);
+                    suggestionsEl.appendChild(suggestionEl);
+                });
+            }
+
+            // Track processing time
+            if (data.processing_time_ms) {
+                processingTimes.push(data.processing_time_ms);
+                if (processingTimes.length > 100) {
+                    processingTimes.shift();
+                }
+            }
+
+            // Handle completed words
+            if (data.word_completed) {
+                const translation = showAmharic ? data.amharic_translation : null;
+                addCompletedWord(data.word_completed, translation);
+                wordsCompletedCount++;
+            }
+
+            // Update session stats if provided
+            if (data.session_stats) {
+                updateSessionStatsFromServer(data.session_stats);
+            }
+
+            updateStats(data);
+        }
+
+        function updateSessionStatsFromServer(stats) {
+            if (stats.letters_recognized !== undefined) {
+                lettersRecognizedCount = stats.letters_recognized;
+            }
+            if (stats.words_completed !== undefined) {
+                wordsCompletedCount = stats.words_completed;
+            }
+            if (stats.session_duration_seconds !== undefined) {
+                document.getElementById('sessionDuration').textContent = Math.round(stats.session_duration_seconds) + 's';
+            }
+        }
+
+        function displaySessionStats(stats) {
+            log('📊 Session Statistics:', 'success');
+            log(`  Total Frames: ${stats.total_frames}`);
+            log(`  Letters Recognized: ${stats.letters_recognized}`);
+            log(`  Words Completed: ${stats.words_completed}`);
+            log(`  Average Confidence: ${(stats.average_confidence * 100).toFixed(1)}%`);
+            log(`  Session Duration: ${stats.session_duration_seconds}s`);
+            log(`  FPS: ${stats.fps}`);
         }
 
         function disconnectWebSocket() {
@@ -761,6 +923,7 @@
                 ws = null;
             }
             updateStatus(false);
+            log('Disconnected from server', 'error');
         }
 
         async function startCamera() {
@@ -771,7 +934,6 @@
                 landmarkCanvas = document.getElementById('landmarkCanvas');
                 landmarkCtx = landmarkCanvas.getContext('2d');
 
-                // Get video stream first
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         width: 480,
@@ -782,9 +944,7 @@
 
                 video.srcObject = stream;
 
-                // Wait for video to be ready
                 video.onloadedmetadata = () => {
-                    // Initialize MediaPipe after video is ready
                     if (typeof Hands !== 'undefined') {
                         hands = new Hands({
                             locateFile: (file) => {
@@ -800,36 +960,32 @@
                         });
 
                         hands.onResults(onHandResults);
-
-                        log('Camera and MediaPipe hands initialized');
+                        log('Camera and MediaPipe initialized', 'success');
                     } else {
-                        log('MediaPipe not available - landmarks disabled');
+                        log('MediaPipe not available - landmarks disabled', 'error');
                     }
                 };
 
-                log('Camera started');
+                log('Camera started', 'success');
 
             } catch (error) {
-                log(`Camera error: ${error}`);
+                log(`Camera error: ${error}`, 'error');
             }
         }
 
         function onHandResults(results) {
             if (!showLandmarks || !landmarkCtx) return;
 
-            // Clear previous landmarks
             landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
 
-            // Draw landmarks if hand is detected
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
 
-                // Draw simple hand landmarks without external dependencies
                 landmarkCtx.strokeStyle = '#00FF00';
                 landmarkCtx.lineWidth = 2;
                 landmarkCtx.fillStyle = '#FF0000';
 
-                // Draw landmarks as circles
+                // Draw landmarks
                 for (let i = 0; i < landmarks.length; i++) {
                     const x = landmarks[i].x * landmarkCanvas.width;
                     const y = landmarks[i].y * landmarkCanvas.height;
@@ -839,13 +995,13 @@
                     landmarkCtx.fill();
                 }
 
-                // Draw some key connections (simplified)
+                // Draw connections
                 const connections = [
-                    [0, 1], [1, 2], [2, 3], [3, 4], // thumb
-                    [0, 5], [5, 6], [6, 7], [7, 8], // index
-                    [0, 9], [9, 10], [10, 11], [11, 12], // middle
-                    [0, 13], [13, 14], [14, 15], [15, 16], // ring
-                    [0, 17], [17, 18], [18, 19], [19, 20] // pinky
+                    [0, 1], [1, 2], [2, 3], [3, 4],
+                    [0, 5], [5, 6], [6, 7], [7, 8],
+                    [0, 9], [9, 10], [10, 11], [11, 12],
+                    [0, 13], [13, 14], [14, 15], [15, 16],
+                    [0, 17], [17, 18], [18, 19], [19, 20]
                 ];
 
                 landmarkCtx.beginPath();
@@ -867,48 +1023,39 @@
                 video.srcObject.getTracks().forEach(track => track.stop());
                 video.srcObject = null;
             }
-            if (camera) {
-                camera.stop();
-                camera = null;
-            }
             if (landmarkCtx) {
                 landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
             }
-            log('Camera stopped');
+            log('Camera stopped', 'error');
         }
 
         function captureFrame() {
             if (!video || !canvas || !ctx) return null;
-
-            // Draw video frame to canvas
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // Convert canvas to base64
             return canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
         }
 
         function startRecognition() {
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                log('Connect WebSocket first');
+                log('Connect WebSocket first', 'error');
                 return;
             }
 
             if (!video || !video.srcObject) {
-                log('Start camera first');
+                log('Start camera first', 'error');
                 return;
             }
 
             if (isRecognizing) {
-                log('Recognition already running');
+                log('Recognition already running', 'error');
                 return;
             }
 
             isRecognizing = true;
             framesSent = 0;
-            log('Starting recognition...');
+            log('Recognition started', 'success');
 
             recognitionInterval = setInterval(() => {
-                // Capture frame for ASL recognition
                 const frameData = captureFrame();
                 if (frameData && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify({
@@ -918,12 +1065,11 @@
                     framesSent++;
                 }
 
-                // Process landmarks separately if enabled and MediaPipe is available
                 if (showLandmarks && hands && video) {
                     try {
                         hands.send({image: video});
                     } catch (error) {
-                        // Ignore MediaPipe errors to not break main recognition
+                        // Ignore MediaPipe errors
                     }
                 }
             }, 200); // 5 FPS
@@ -935,30 +1081,38 @@
                 recognitionInterval = null;
             }
             isRecognizing = false;
-            log('Recognition stopped');
+            log('Recognition stopped', 'error');
         }
 
         function resetWord() {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'reset' }));
-                log('Reset word sent');
+                log('Reset word command sent', 'success');
             } else {
-                log('WebSocket not connected');
+                log('WebSocket not connected', 'error');
+            }
+        }
+
+        function getSessionStats() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'get_stats' }));
+                log('Requesting session statistics...', 'success');
+            } else {
+                log('WebSocket not connected', 'error');
             }
         }
 
         function selectSuggestion(suggestion) {
-            log(`Selected suggestion: ${suggestion}`);
+            log(`Selected suggestion: ${suggestion}`, 'success');
             addCompletedWord(suggestion, null);
             wordsCompletedCount++;
-            updateStats();
+            updateStats(null);
             resetWord();
         }
 
         function addCompletedWord(word, amharicTranslation) {
             const completedDiv = document.getElementById('completedWords');
 
-            // Remove "no words" message if it exists
             if (completedDiv.innerHTML.includes('No words completed yet')) {
                 completedDiv.innerHTML = '';
             }
@@ -975,23 +1129,18 @@
             wordDiv.innerHTML = content;
             completedDiv.insertBefore(wordDiv, completedDiv.firstChild);
 
-            // Keep only last 10 words
             while (completedDiv.children.length > 10) {
                 completedDiv.removeChild(completedDiv.lastChild);
             }
 
-            log(`Word completed: ${word}${amharicTranslation ? ` (${amharicTranslation})` : ''}`);
+            log(`Word completed: ${word}${amharicTranslation ? ` (${amharicTranslation})` : ''}`, 'success');
         }
 
-        function clearLog() {
-            document.getElementById('console').innerHTML = '';
-            log('Log cleared');
-        }
-
-        // Initialize
+        // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             setupToggles();
-            log('ASL Test Client loaded. Click Connect to start.');
+            log('🚀 ASL Recognition Client loaded successfully', 'success');
+            log('Click Connect to start using the application');
         });
     </script>
 </body>

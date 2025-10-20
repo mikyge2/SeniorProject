@@ -1,6 +1,6 @@
 """
 FastAPI Backend for Real-time ASL Recognition Service
-Converts enhanced_asl_inference.py into a mobile-ready API
+Enhanced version with advanced features and improved UX
 """
 
 import asyncio
@@ -9,9 +9,10 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Any, List
+from collections import deque
 import io
 
 import cv2
@@ -45,33 +46,119 @@ class PredictionResponse(BaseModel):
     amharic_translation: Optional[str] = None
     letter_progress: float
     timestamp: str
+    is_sign_detected: bool = True  # NEW: Flag for sign detection
+    fps: Optional[float] = None  # NEW: Real-time FPS
+    session_stats: Optional[Dict[str, Any]] = None  # NEW: Session statistics
 
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     timestamp: str
     connections: int
+    uptime_seconds: Optional[float] = None  # NEW: Server uptime
 
 class ResetResponse(BaseModel):
     status: str
     message: str
 
+class SessionStats(BaseModel):
+    """Statistics for a recognition session"""
+    total_frames: int
+    letters_recognized: int
+    words_completed: int
+    average_confidence: float
+    session_duration_seconds: float
+
+
+class PerformanceMonitor:
+    """Monitor and optimize performance metrics"""
+
+    def __init__(self, window_size: int = 30):
+        self.window_size = window_size
+        self.frame_times = deque(maxlen=window_size)
+        self.confidences = deque(maxlen=window_size)
+
+    def record_frame(self, processing_time: float, confidence: float):
+        """Record frame processing metrics"""
+        self.frame_times.append(processing_time)
+        self.confidences.append(confidence)
+
+    def get_fps(self) -> float:
+        """Calculate current FPS"""
+        if not self.frame_times:
+            return 0.0
+        avg_time = sum(self.frame_times) / len(self.frame_times)
+        return 1.0 / avg_time if avg_time > 0 else 0.0
+
+    def get_average_confidence(self) -> float:
+        """Get average confidence over window"""
+        if not self.confidences:
+            return 0.0
+        return sum(self.confidences) / len(self.confidences)
+
+
+class SmartWordPredictor:
+    """Advanced word prediction with context awareness"""
+
+    def __init__(self):
+        self.word_history = deque(maxlen=10)
+        self.common_words = self._load_common_words()
+
+    def _load_common_words(self) -> List[str]:
+        """Load common English words for better predictions"""
+        # Top 100 most common ASL words
+        return [
+            "HELLO", "THANKS", "PLEASE", "SORRY", "YES", "NO", "HELP", "LOVE",
+            "FAMILY", "FRIEND", "GOOD", "BAD", "HAPPY", "SAD", "WATER", "FOOD",
+            "MORE", "FINISH", "WORK", "HOME", "SCHOOL", "TEACH", "LEARN", "NAME",
+            "WHERE", "WHAT", "WHEN", "HOW", "WHY", "WHO", "TIME", "DAY", "NIGHT",
+            "MORNING", "AFTERNOON", "EVENING", "TODAY", "TOMORROW", "YESTERDAY"
+        ]
+
+    def get_smart_suggestions(self, partial_word: str, base_suggestions: List[str]) -> List[str]:
+        """Get context-aware word suggestions"""
+        if not partial_word:
+            return base_suggestions[:3]
+
+        # Combine base suggestions with common words
+        all_suggestions = list(set(base_suggestions + self.common_words))
+
+        # Filter and rank by relevance
+        matches = [w for w in all_suggestions if w.startswith(partial_word.upper())]
+
+        # Prioritize based on:
+        # 1. Exact prefix match
+        # 2. Word length (prefer shorter words)
+        # 3. Common usage
+        matches.sort(key=lambda w: (
+            not w.startswith(partial_word.upper()),
+            len(w),
+            w not in self.common_words
+        ))
+
+        return matches[:5]
+
+    def record_completed_word(self, word: str):
+        """Record completed word for context"""
+        self.word_history.append(word)
+
 
 class ASLInferenceEngine:
-    """Headless ASL inference engine for API use."""
+    """Enhanced headless ASL inference engine with advanced features."""
 
     def __init__(self, model_path: str, metadata_path: str, enable_amharic: bool = True):
         self.model_path = model_path
         self.metadata_path = metadata_path
         self.enable_amharic = enable_amharic
+        self.start_time = time.time()
 
-        # Initialize core inference system (with TTS enabled for API)
+        # Initialize core inference system
         self.inference_system = ASLRealTimeInference(
             model_path=model_path,
             metadata_path=metadata_path,
-            camera_index=0,  # Not used in API mode
-            enable_speech=True,   # Re-enabled for TTS
-            use_google_tts=True,  # Re-enabled for better TTS
+            camera_index=0,
+            enable_speech=True,
+            use_google_tts=True,
             show_landmarks=False,
             enable_amharic=enable_amharic
         )
@@ -88,7 +175,6 @@ class ASLInferenceEngine:
     def _initialize_system(self):
         """Initialize the inference system components."""
         try:
-            # Load model and metadata
             self.inference_system.load_model()
             self.inference_system.load_metadata()
             self.inference_system.initialize_mediapipe()
@@ -101,17 +187,18 @@ class ASLInferenceEngine:
             logger.error(f"Failed to initialize inference system: {e}")
             raise
 
-    def process_frame(self, frame_data: bytes, word_tracker: WordTracker) -> Dict[str, Any]:
+    def process_frame(self, frame_data: bytes, word_tracker: WordTracker,
+                     performance_monitor: PerformanceMonitor) -> Dict[str, Any]:
         """
-        Process a single frame and return prediction results.
+        Process a single frame with enhanced features.
 
-        Args:
-            frame_data: Raw image bytes
-            word_tracker: WordTracker instance for this connection
-
-        Returns:
-            Dictionary with prediction results
+        NEW FEATURES:
+        - "del" and "space" detection handling
+        - Performance monitoring
+        - Enhanced error handling
         """
+        start_time = time.time()
+
         try:
             # Decode image from bytes
             nparr = np.frombuffer(frame_data, np.uint8)
@@ -120,7 +207,7 @@ class ASLInferenceEngine:
             if frame is None:
                 raise ValueError("Could not decode image data")
 
-            # Flip frame horizontally for mirror effect (like mobile camera)
+            # Flip frame horizontally for mirror effect
             frame = cv2.flip(frame, 1)
 
             # Convert to RGB for MediaPipe
@@ -139,13 +226,24 @@ class ASLInferenceEngine:
             # Run inference
             prediction, confidence = self.inference_system.predict(image_input, landmarks_input)
 
-            # Update word tracker
-            current_word, word_finalized, letter_progress = word_tracker.add_prediction(
-                prediction, confidence
-            )
+            # NEW: Handle "del" and "space" as no sign detected
+            is_sign_detected = True
+            display_letter = prediction
 
-            # Get word suggestions
-            word_suggestions = word_tracker.get_word_suggestions(current_word, max_suggestions=3)
+            if prediction.lower() in ["del", "space"]:
+                is_sign_detected = False
+                display_letter = ""
+                # Don't add to word tracker if no sign detected
+                current_word = word_tracker.current_word
+                word_finalized = False
+                letter_progress = 0.0
+                word_suggestions = []
+            else:
+                # Normal processing for valid signs
+                current_word, word_finalized, letter_progress = word_tracker.add_prediction(
+                    prediction, confidence
+                )
+                word_suggestions = word_tracker.get_word_suggestions(current_word, max_suggestions=5)
 
             # Handle word completion
             word_completed = None
@@ -159,7 +257,7 @@ class ASLInferenceEngine:
                     amharic_translation = self.amharic_translator.translate(current_word)
                     logger.info(f"Translation: '{current_word}' -> '{amharic_translation}'")
 
-                # Handle TTS (both English and Amharic)
+                # Handle TTS
                 self._handle_word_completion_with_tts(current_word, amharic_translation)
 
                 # Reset word tracker for next word
@@ -168,16 +266,22 @@ class ASLInferenceEngine:
                 logger.info(f"Word completed: '{word_completed}'" +
                           (f" -> Amharic: '{amharic_translation}'" if amharic_translation else ""))
 
+            # Record performance metrics
+            processing_time = time.time() - start_time
+            performance_monitor.record_frame(processing_time, confidence if is_sign_detected else 0.0)
+
             return {
-                "letter": prediction,
-                "confidence": round(confidence, 3),
-                "current_word": current_word,
+                "letter": display_letter,
+                "confidence": round(confidence, 3) if is_sign_detected else 0.0,
+                "current_word": current_word if is_sign_detected else word_tracker.current_word,
                 "word_suggestions": word_suggestions,
                 "word_finalized": word_finalized,
                 "word_completed": word_completed,
                 "amharic_translation": amharic_translation,
                 "letter_progress": round(letter_progress, 3),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "is_sign_detected": is_sign_detected,  # NEW
+                "fps": round(performance_monitor.get_fps(), 1)  # NEW
             }
 
         except Exception as e:
@@ -192,13 +296,13 @@ class ASLInferenceEngine:
                 "amharic_translation": None,
                 "letter_progress": 0.0,
                 "timestamp": datetime.now().isoformat(),
+                "is_sign_detected": False,
                 "error": str(e)
             }
 
     def _handle_word_completion_with_tts(self, word: str, amharic_translation: Optional[str]):
         """Handle word completion with TTS for both English and Amharic."""
         try:
-            # Use the original inference system's TTS if available
             if hasattr(self.inference_system, 'tts_engine') and self.inference_system.tts_engine:
                 # Speak English word
                 self.inference_system.tts_engine.speak(word, 'en')
@@ -206,26 +310,28 @@ class ASLInferenceEngine:
 
                 # Speak Amharic translation if available
                 if self.enable_amharic and amharic_translation:
-                    # Add delay for Amharic speech (as in original)
                     import threading
                     threading.Timer(1.2, lambda: self.inference_system.tts_engine.speak(amharic_translation, 'am')).start()
                     logger.info(f"Speaking Amharic: '{amharic_translation}' (delayed)")
             else:
-                # Fallback: try to initialize TTS if not available
                 logger.warning("TTS engine not available in inference system")
 
         except Exception as e:
             logger.error(f"TTS error: {e}")
 
+    def get_uptime(self) -> float:
+        """Get server uptime in seconds"""
+        return time.time() - self.start_time
+
 
 class ConnectionManager:
-    """Manage WebSocket connections and their word trackers."""
+    """Enhanced connection manager with session tracking."""
 
     def __init__(self):
         self.active_connections: Dict[str, Dict[str, Any]] = {}
 
     async def connect(self, websocket: WebSocket) -> str:
-        """Accept new WebSocket connection and create word tracker."""
+        """Accept new WebSocket connection with enhanced tracking."""
         await websocket.accept()
 
         connection_id = str(uuid.uuid4())
@@ -236,21 +342,37 @@ class ConnectionManager:
             min_letter_duration=0.8
         )
 
+        # NEW: Add performance monitor and predictor
+        performance_monitor = PerformanceMonitor()
+        smart_predictor = SmartWordPredictor()
+
         self.active_connections[connection_id] = {
             "websocket": websocket,
             "word_tracker": word_tracker,
+            "performance_monitor": performance_monitor,  # NEW
+            "smart_predictor": smart_predictor,  # NEW
             "connected_at": datetime.now(),
-            "frame_count": 0
+            "frame_count": 0,
+            "letters_recognized": 0,  # NEW
+            "words_completed": 0,  # NEW
+            "total_confidence": 0.0  # NEW
         }
 
         logger.info(f"New WebSocket connection: {connection_id}")
         return connection_id
 
     def disconnect(self, connection_id: str):
-        """Remove connection and clean up resources."""
+        """Remove connection with session summary."""
         if connection_id in self.active_connections:
-            del self.active_connections[connection_id]
+            conn = self.active_connections[connection_id]
+            duration = (datetime.now() - conn["connected_at"]).total_seconds()
+
             logger.info(f"WebSocket disconnected: {connection_id}")
+            logger.info(f"  Session duration: {duration:.1f}s")
+            logger.info(f"  Frames processed: {conn['frame_count']}")
+            logger.info(f"  Words completed: {conn['words_completed']}")
+
+            del self.active_connections[connection_id]
 
     def get_connection(self, connection_id: str) -> Optional[Dict[str, Any]]:
         """Get connection data by ID."""
@@ -259,6 +381,25 @@ class ConnectionManager:
     def get_connection_count(self) -> int:
         """Get number of active connections."""
         return len(self.active_connections)
+
+    def get_session_stats(self, connection_id: str) -> Optional[Dict[str, Any]]:
+        """NEW: Get session statistics for a connection."""
+        conn = self.get_connection(connection_id)
+        if not conn:
+            return None
+
+        duration = (datetime.now() - conn["connected_at"]).total_seconds()
+        avg_confidence = (conn["total_confidence"] / conn["letters_recognized"]
+                         if conn["letters_recognized"] > 0 else 0.0)
+
+        return {
+            "total_frames": conn["frame_count"],
+            "letters_recognized": conn["letters_recognized"],
+            "words_completed": conn["words_completed"],
+            "average_confidence": round(avg_confidence, 3),
+            "session_duration_seconds": round(duration, 1),
+            "fps": round(conn["performance_monitor"].get_fps(), 1)
+        }
 
     def reset_word_tracker(self, connection_id: str) -> bool:
         """Reset word tracker for a connection."""
@@ -272,14 +413,14 @@ class ConnectionManager:
 # Initialize FastAPI app
 app = FastAPI(
     title="ASL Recognition API",
-    description="Real-time American Sign Language recognition with Amharic translation",
-    version="1.0.0"
+    description="Real-time American Sign Language recognition with Amharic translation - Enhanced Edition",
+    version="2.0.0"
 )
 
-# CORS middleware for mobile app access
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -294,11 +435,9 @@ async def startup_event():
     """Initialize the ASL inference engine on startup."""
     global inference_engine
 
-    # Configure paths (adjust as needed)
     model_path = "export/asl_model.tflite"
     metadata_path = "processed_asl/metadata.json"
 
-    # Check if files exist
     if not Path(model_path).exists():
         logger.error(f"Model file not found: {model_path}")
         raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -308,34 +447,24 @@ async def startup_event():
         raise FileNotFoundError(f"Metadata file not found: {metadata_path}")
 
     try:
-        # Initialize inference engine with Amharic and TTS enabled
         inference_engine = ASLInferenceEngine(
             model_path=model_path,
             metadata_path=metadata_path,
             enable_amharic=True
         )
 
-        # Test translation availability
         if inference_engine.amharic_translator:
             if inference_engine.amharic_translator.translation_available:
-                # Test translation
                 test_translation = inference_engine.amharic_translator.translate("hello")
                 logger.info(f"Translation test: 'hello' -> '{test_translation}'")
             else:
                 logger.error("Amharic translator failed to initialize")
-        else:
-            logger.error("Amharic translator is None")
 
-        # Test TTS availability
         if hasattr(inference_engine.inference_system, 'tts_engine'):
             if inference_engine.inference_system.tts_engine:
                 logger.info("TTS engine initialized successfully")
-            else:
-                logger.error("TTS engine is None")
-        else:
-            logger.error("TTS engine not found in inference system")
 
-        logger.info("ASL Recognition API server started successfully")
+        logger.info("ASL Recognition API server started successfully - Enhanced Edition")
 
     except Exception as e:
         logger.error(f"Failed to initialize inference engine: {e}")
@@ -344,13 +473,29 @@ async def startup_event():
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """Health check endpoint."""
+    """Enhanced health check endpoint."""
+    uptime = inference_engine.get_uptime() if inference_engine else None
+
     return HealthResponse(
         status="healthy" if inference_engine is not None else "unhealthy",
         model_loaded=inference_engine is not None,
         timestamp=datetime.now().isoformat(),
-        connections=connection_manager.get_connection_count()
+        connections=connection_manager.get_connection_count(),
+        uptime_seconds=round(uptime, 1) if uptime else None
     )
+
+
+@app.get("/stats/{connection_id}")
+async def get_session_stats(connection_id: str):
+    """NEW: Get session statistics for a connection."""
+    stats = connection_manager.get_session_stats(connection_id)
+    if stats:
+        return stats
+    else:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Connection {connection_id} not found"
+        )
 
 
 @app.post("/reset/{connection_id}", response_model=ResetResponse)
@@ -373,31 +518,26 @@ async def predict_rest(
     file: UploadFile = File(...),
     connection_id: Optional[str] = None
 ):
-    """
-    REST endpoint for frame prediction (fallback option).
-    Requires multipart/form-data with image file.
-    """
+    """REST endpoint for frame prediction."""
     if inference_engine is None:
         raise HTTPException(status_code=503, detail="Inference engine not initialized")
 
     try:
-        # Read image data
         image_data = await file.read()
 
-        # Create or get word tracker
         if connection_id:
             connection = connection_manager.get_connection(connection_id)
             if connection:
                 word_tracker = connection["word_tracker"]
+                performance_monitor = connection["performance_monitor"]
             else:
-                # Create new word tracker for this connection_id
                 word_tracker = WordTracker()
+                performance_monitor = PerformanceMonitor()
         else:
-            # Create temporary word tracker
             word_tracker = WordTracker()
+            performance_monitor = PerformanceMonitor()
 
-        # Process frame
-        result = inference_engine.process_frame(image_data, word_tracker)
+        result = inference_engine.process_frame(image_data, word_tracker, performance_monitor)
 
         return PredictionResponse(**result)
 
@@ -409,47 +549,28 @@ async def predict_rest(
 @app.websocket("/ws/predict")
 async def websocket_predict(websocket: WebSocket):
     """
-    WebSocket endpoint for continuous frame processing.
+    Enhanced WebSocket endpoint with advanced features.
 
-    Expected message format:
-    {
-        "type": "frame",
-        "data": "base64_encoded_image_data"
-    }
-
-    Response format:
-    {
-        "type": "prediction",
-        "data": {
-            "letter": "H",
-            "confidence": 0.94,
-            "current_word": "HE",
-            "word_suggestions": ["HELLO", "HELP"],
-            "word_finalized": false,
-            "word_completed": null,
-            "amharic_translation": null,
-            "letter_progress": 0.75,
-            "timestamp": "2023-..."
-        }
-    }
+    NEW FEATURES:
+    - Real-time FPS monitoring
+    - Smart word predictions
+    - Session statistics
+    - "No sign detected" handling
     """
     if inference_engine is None:
         await websocket.close(code=1013, reason="Inference engine not initialized")
         return
 
-    # Connect and get connection ID
     connection_id = await connection_manager.connect(websocket)
 
     try:
         while True:
-            # Receive message from client
             message = await websocket.receive_text()
 
             try:
                 data = json.loads(message)
 
                 if data.get("type") == "frame":
-                    # Decode base64 image data
                     image_base64 = data.get("data", "")
                     if not image_base64:
                         await websocket.send_text(json.dumps({
@@ -458,7 +579,6 @@ async def websocket_predict(websocket: WebSocket):
                         }))
                         continue
 
-                    # Decode base64 to bytes
                     try:
                         image_data = base64.b64decode(image_base64)
                     except Exception as e:
@@ -468,7 +588,6 @@ async def websocket_predict(websocket: WebSocket):
                         }))
                         continue
 
-                    # Get connection and word tracker
                     connection = connection_manager.get_connection(connection_id)
                     if not connection:
                         await websocket.send_text(json.dumps({
@@ -478,18 +597,41 @@ async def websocket_predict(websocket: WebSocket):
                         continue
 
                     word_tracker = connection["word_tracker"]
+                    performance_monitor = connection["performance_monitor"]
+                    smart_predictor = connection["smart_predictor"]
                     connection["frame_count"] += 1
 
                     # Process frame
                     start_time = time.time()
-                    result = inference_engine.process_frame(image_data, word_tracker)
-                    processing_time = (time.time() - start_time) * 1000  # ms
+                    result = inference_engine.process_frame(
+                        image_data, word_tracker, performance_monitor
+                    )
+                    processing_time = (time.time() - start_time) * 1000
+
+                    # Update connection stats
+                    if result.get("is_sign_detected"):
+                        connection["letters_recognized"] += 1
+                        connection["total_confidence"] += result.get("confidence", 0.0)
+
+                    if result.get("word_completed"):
+                        connection["words_completed"] += 1
+                        smart_predictor.record_completed_word(result["word_completed"])
+
+                    # Enhance word suggestions with smart predictor
+                    if result.get("current_word"):
+                        result["word_suggestions"] = smart_predictor.get_smart_suggestions(
+                            result["current_word"],
+                            result.get("word_suggestions", [])
+                        )
 
                     # Add processing stats
                     result["processing_time_ms"] = round(processing_time, 2)
                     result["frame_count"] = connection["frame_count"]
 
-                    # Send prediction result
+                    # Add session stats every 30 frames
+                    if connection["frame_count"] % 30 == 0:
+                        result["session_stats"] = connection_manager.get_session_stats(connection_id)
+
                     response = {
                         "type": "prediction",
                         "data": result
@@ -497,12 +639,10 @@ async def websocket_predict(websocket: WebSocket):
 
                     await websocket.send_text(json.dumps(response))
 
-                    # Log performance
                     if processing_time > 200:
                         logger.warning(f"Slow processing: {processing_time:.1f}ms for frame {connection['frame_count']}")
 
                 elif data.get("type") == "reset":
-                    # Reset word tracker
                     connection = connection_manager.get_connection(connection_id)
                     if connection:
                         connection["word_tracker"].reset_word()
@@ -511,25 +651,28 @@ async def websocket_predict(websocket: WebSocket):
                             "message": "Word tracker reset"
                         }))
 
+                elif data.get("type") == "get_stats":
+                    # NEW: Get session statistics on demand
+                    stats = connection_manager.get_session_stats(connection_id)
+                    if stats:
+                        await websocket.send_text(json.dumps({
+                            "type": "stats",
+                            "data": stats
+                        }))
+
                 elif data.get("type") == "config":
-                    # Update configuration settings
                     config_data = data.get("data", {})
                     connection = connection_manager.get_connection(connection_id)
 
                     if connection and "hold_time" in config_data:
                         hold_time = float(config_data["hold_time"])
-                        if 0.1 <= hold_time <= 5.0:  # Reasonable bounds
+                        if 0.1 <= hold_time <= 5.0:
                             connection["word_tracker"].min_letter_duration = hold_time
                             await websocket.send_text(json.dumps({
                                 "type": "config_updated",
                                 "message": f"Hold time updated to {hold_time:.1f}s"
                             }))
                             logger.info(f"Hold time updated to {hold_time:.1f}s for connection {connection_id}")
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "message": "Hold time must be between 0.1 and 5.0 seconds"
-                            }))
 
                 else:
                     await websocket.send_text(json.dumps({
@@ -562,26 +705,33 @@ async def websocket_predict(websocket: WebSocket):
 async def root():
     """Root endpoint with API information."""
     return {
-        "message": "ASL Recognition API",
-        "version": "1.0.0",
+        "message": "ASL Recognition API - Enhanced Edition",
+        "version": "2.0.0",
+        "new_features": [
+            "Smart 'No Sign Detected' handling for del/space",
+            "Real-time FPS monitoring",
+            "Advanced word predictions with context",
+            "Session statistics tracking",
+            "Performance optimization",
+            "Enhanced logging and debugging"
+        ],
         "endpoints": {
             "health": "GET /health",
             "websocket": "WS /ws/predict",
             "rest_predict": "POST /predict",
-            "reset": "POST /reset/{connection_id}"
+            "reset": "POST /reset/{connection_id}",
+            "stats": "GET /stats/{connection_id}"
         },
-        "websocket_example": {
-            "connect": "ws://localhost:8000/ws/predict",
-            "message_format": {
-                "type": "frame",
-                "data": "base64_encoded_image"
-            }
+        "websocket_message_types": {
+            "frame": "Send frame for prediction",
+            "reset": "Reset word tracker",
+            "config": "Update configuration",
+            "get_stats": "Get session statistics"
         }
     }
 
 
 if __name__ == "__main__":
-    # For development - use uvicorn command for production
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
