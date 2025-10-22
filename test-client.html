@@ -78,6 +78,139 @@
             100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
         }
 
+        .word-popup, .stats-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 40px 60px;
+            border-radius: 25px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            z-index: 10000;
+            text-align: center;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+            opacity: 0;
+            transition: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        .word-popup.show, .stats-popup.show {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+        }
+
+        .popup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .popup-overlay.show {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .word-popup-icon {
+            font-size: 3em;
+            margin-bottom: 20px;
+            animation: bounce 0.6s ease;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .word-popup-title {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .word-popup-english {
+            font-size: 3.5em;
+            font-weight: bold;
+            margin: 20px 0;
+            text-shadow: 3px 3px 6px rgba(0,0,0,0.3);
+            letter-spacing: 3px;
+        }
+
+        .word-popup-amharic {
+            font-size: 2.5em;
+            color: #FFD700;
+            margin-top: 20px;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .popup-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .popup-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: rotate(90deg);
+        }
+
+        .stats-popup {
+            padding: 40px 50px;
+            min-width: 500px;
+            max-width: 600px;
+        }
+
+        .stats-popup h2 {
+            font-size: 2em;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stats-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .stats-item-label {
+            font-size: 0.9em;
+            opacity: 0.8;
+            margin-bottom: 10px;
+        }
+
+        .stats-item-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
         .controls-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -132,6 +265,7 @@
         button.warning { background: linear-gradient(45deg, #FF9800, #F57C00); }
         button.danger { background: linear-gradient(45deg, #f44336, #d32f2f); }
         button.secondary { background: linear-gradient(45deg, #6c757d, #5a6268); }
+        button.info { background: linear-gradient(45deg, #2196F3, #1976D2); }
 
         .main-content {
             display: grid;
@@ -197,6 +331,26 @@
             opacity: 1;
         }
 
+        .not-recognizing-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(96, 125, 139, 0.9);
+            padding: 20px 30px;
+            border-radius: 15px;
+            font-size: 1.2em;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        .not-recognizing-overlay.show {
+            opacity: 1;
+        }
+
         .results-section {
             display: grid;
             gap: 15px;
@@ -229,9 +383,9 @@
             justify-content: center;
         }
 
-        .letter-display.no-sign {
+        .letter-display.no-sign, .letter-display.not-active {
             font-size: 1.5em;
-            color: #ff9999;
+            color: #aaa;
             animation: none;
         }
 
@@ -272,12 +426,25 @@
             letter-spacing: 3px;
         }
 
+        .word-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .word-actions button {
+            flex: 1;
+            margin: 0;
+        }
+
         .suggestions {
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
             margin-top: 15px;
             min-height: 50px;
+            max-height: 200px;
+            overflow-y: auto;
         }
 
         .suggestion {
@@ -287,12 +454,24 @@
             cursor: pointer;
             transition: all 0.3s ease;
             font-weight: bold;
-            animation: slideIn 0.3s ease-out;
+            animation: fadeIn 0.3s ease-out;
+            flex-shrink: 0;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .suggestion:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            transform: scale(1.05) translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
         }
 
         .completed-words {
@@ -496,31 +675,27 @@
             .word-display {
                 font-size: 1.5em;
             }
-        }
 
-        .session-info {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 15px;
-            border-radius: 10px;
-            margin: 20px 0;
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }
+            .word-popup {
+                padding: 30px 40px;
+            }
 
-        .session-item {
-            text-align: center;
-        }
+            .word-popup-english {
+                font-size: 2.5em;
+            }
 
-        .session-item .label {
-            font-size: 0.9em;
-            opacity: 0.8;
-            margin-bottom: 5px;
-        }
+            .word-popup-amharic {
+                font-size: 2em;
+            }
 
-        .session-item .value {
-            font-size: 1.5em;
-            font-weight: bold;
+            .stats-popup {
+                min-width: 90%;
+                padding: 30px 25px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 
@@ -528,10 +703,54 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js"></script>
 </head>
 <body>
+    <!-- Popup Overlay -->
+    <div id="popupOverlay" class="popup-overlay" onclick="closeAllPopups()"></div>
+
+    <!-- Word Completion Popup -->
+    <div id="wordPopup" class="word-popup">
+        <button class="popup-close" onclick="closeWordPopup()">×</button>
+        <div class="word-popup-icon">🎉</div>
+        <div class="word-popup-title">Word Completed</div>
+        <div class="word-popup-english" id="popupEnglish">HELLO</div>
+        <div class="word-popup-amharic" id="popupAmharic">ሰላም</div>
+    </div>
+
+    <!-- Stats Popup -->
+    <div id="statsPopup" class="stats-popup">
+        <button class="popup-close" onclick="closeStatsPopup()">×</button>
+        <h2>📊 Session Statistics</h2>
+        <div class="stats-grid">
+            <div class="stats-item">
+                <div class="stats-item-label">Total Frames</div>
+                <div class="stats-item-value" id="statsFrames">0</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-item-label">Letters Recognized</div>
+                <div class="stats-item-value" id="statsLetters">0</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-item-label">Words Completed</div>
+                <div class="stats-item-value" id="statsWords">0</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-item-label">Average Confidence</div>
+                <div class="stats-item-value" id="statsConfidence">0%</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-item-label">Session Duration</div>
+                <div class="stats-item-value" id="statsDuration">0s</div>
+            </div>
+            <div class="stats-item">
+                <div class="stats-item-label">Current FPS</div>
+                <div class="stats-item-value" id="statsFPS">0</div>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <div class="header">
             <h1>🤟 ASL Recognition Client</h1>
-            <div class="version-badge">Enhanced v2.0</div>
+            <div class="version-badge">Enhanced v2.2</div>
             <div id="status" class="status disconnected">
                 <span class="status-icon">⚫</span>
                 <span>Disconnected</span>
@@ -555,6 +774,13 @@
                 </label>
             </div>
             <div class="toggle-group">
+                <span>Speech Output:</span>
+                <label class="toggle">
+                    <input type="checkbox" id="speechToggle" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div class="toggle-group">
                 <span>Word Suggestions:</span>
                 <label class="toggle">
                     <input type="checkbox" id="suggestionsToggle" checked>
@@ -562,9 +788,9 @@
                 </label>
             </div>
             <div class="toggle-group">
-                <span>Hold Time:</span>
-                <input type="range" id="holdTimeSlider" class="hold-time-slider" min="0.5" max="3.0" step="0.1" value="0.8">
-                <span id="holdTimeValue" style="font-weight: bold; color: #4CAF50; min-width: 40px;">0.8s</span>
+                <span>Letter Cooldown:</span>
+                <input type="range" id="cooldownSlider" class="hold-time-slider" min="0.5" max="3.0" step="0.1" value="1.0">
+                <span id="cooldownValue" style="font-weight: bold; color: #4CAF50; min-width: 40px;">1.0s</span>
             </div>
         </div>
 
@@ -588,7 +814,7 @@
             <div class="control-section">
                 <h3>⚙️ Actions</h3>
                 <button onclick="resetWord()" class="secondary">Reset Word</button>
-                <button onclick="getSessionStats()" class="secondary">Get Stats</button>
+                <button onclick="getSessionStats()" class="info">Get Stats</button>
             </div>
         </div>
 
@@ -630,6 +856,7 @@
                     <canvas id="canvas" width="480" height="360"></canvas>
                     <canvas id="landmarkCanvas" class="landmark-overlay" width="480" height="360"></canvas>
                     <div id="noSignOverlay" class="no-sign-overlay">⚠️ No Sign Detected</div>
+                    <div id="notRecognizingOverlay" class="not-recognizing-overlay">⏸️ Not Recognizing</div>
                 </div>
             </div>
 
@@ -650,6 +877,11 @@
                 <div class="result-card">
                     <h3>📝 Current Word</h3>
                     <div class="word-display" id="currentWord">-</div>
+                    <div class="word-actions">
+                        <button onclick="acceptCurrentWord()" class="success" id="acceptWordBtn" style="display:none;">
+                            ✓ Accept Word
+                        </button>
+                    </div>
                 </div>
 
                 <!-- Word Suggestions -->
@@ -699,7 +931,43 @@
         let showLandmarks = true;
         let showAmharic = true;
         let showSuggestions = true;
-        let currentHoldTime = 0.8;
+        let speechEnabled = true;
+        let letterCooldown = 1.0; // Cooldown in seconds after recognizing a letter
+
+        // Letter cooldown tracking
+        let lastRecognizedLetter = null;
+        let lastRecognitionTime = 0;
+        let isInCooldown = false;
+
+        // Current word tracking
+        let currentWordText = '';
+        let lastSuggestions = [];
+
+        // Enhanced word dictionary for better suggestions
+        const commonWords = [
+            "HELLO", "THANKS", "THANK", "YOU", "PLEASE", "SORRY", "YES", "NO", "HELP", "LOVE",
+            "FAMILY", "FRIEND", "GOOD", "BAD", "HAPPY", "SAD", "WATER", "FOOD", "EAT", "DRINK",
+            "MORE", "FINISH", "FINISHED", "WORK", "HOME", "SCHOOL", "TEACH", "TEACHER", "LEARN",
+            "STUDENT", "NAME", "WHERE", "WHAT", "WHEN", "HOW", "WHY", "WHO", "TIME", "DAY",
+            "NIGHT", "MORNING", "AFTERNOON", "EVENING", "TODAY", "TOMORROW", "YESTERDAY",
+            "WEEK", "MONTH", "YEAR", "HOUR", "MINUTE", "SECOND", "WANT", "NEED", "HAVE",
+            "BOOK", "READ", "WRITE", "PAPER", "PEN", "PENCIL", "COMPUTER", "PHONE", "CALL",
+            "TEXT", "MESSAGE", "EMAIL", "INTERNET", "SEARCH", "FIND", "LOOK", "SEE", "HEAR",
+            "LISTEN", "TALK", "SPEAK", "SAY", "TELL", "ASK", "ANSWER", "QUESTION", "PROBLEM",
+            "SOLUTION", "IDEA", "THINK", "KNOW", "UNDERSTAND", "LEARN", "REMEMBER", "FORGET",
+            "SLEEP", "WAKE", "TIRED", "ENERGY", "STRONG", "WEAK", "SICK", "HEALTHY", "DOCTOR",
+            "HOSPITAL", "MEDICINE", "PAIN", "HURT", "FEEL", "FEELING", "EMOTION", "FEAR",
+            "WORRY", "STRESS", "RELAX", "CALM", "PEACE", "QUIET", "LOUD", "NOISE", "SOUND",
+            "MUSIC", "SONG", "SING", "PLAY", "GAME", "FUN", "ENJOY", "LIKE", "DISLIKE", "HATE",
+            "BEAUTIFUL", "UGLY", "NICE", "MEAN", "KIND", "RUDE", "POLITE", "RESPECT", "HONOR",
+            "TRUST", "BELIEVE", "FAITH", "HOPE", "DREAM", "WISH", "WANT", "DESIRE", "GOAL",
+            "PLAN", "PREPARE", "READY", "START", "BEGIN", "END", "STOP", "CONTINUE", "WAIT",
+            "HURRY", "SLOW", "FAST", "QUICK", "SOON", "LATE", "EARLY", "NOW", "THEN", "LATER",
+            "BEFORE", "AFTER", "DURING", "WHILE", "SINCE", "UNTIL", "ALWAYS", "NEVER",
+            "SOMETIMES", "OFTEN", "RARELY", "USUALLY", "MAYBE", "PERHAPS", "POSSIBLY",
+            "DEFINITELY", "CERTAINLY", "PROBABLY", "SURE", "DOUBT", "CONFUSED", "CLEAR",
+            "EASY", "HARD", "DIFFICULT", "SIMPLE", "COMPLEX", "COMPLICATED", "IMPORTANT"
+        ];
 
         function log(message, type = 'info') {
             const consoleEl = document.getElementById('console');
@@ -742,6 +1010,190 @@
             }
         }
 
+        // Enhanced Text-to-Speech with better voice selection
+        function speak(text, lang = 'en-US') {
+            if (!speechEnabled || !text) {
+                log(`Speech disabled or no text to speak`, 'info');
+                return;
+            }
+
+            if (!('speechSynthesis' in window)) {
+                log('Speech synthesis not supported in this browser', 'error');
+                return;
+            }
+
+            // Cancel any ongoing speech
+            window.speechSynthesis.cancel();
+
+            // Wait a bit for cancel to complete
+            setTimeout(() => {
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = lang;
+                utterance.rate = 0.85;
+                utterance.pitch = 1.0;
+                utterance.volume = 1.0;
+
+                // Try to get a good voice for the language
+                const voices = window.speechSynthesis.getVoices();
+                const preferredVoice = voices.find(voice =>
+                    voice.lang.startsWith(lang.substring(0, 2))
+                );
+                if (preferredVoice) {
+                    utterance.voice = preferredVoice;
+                }
+
+                utterance.onstart = () => {
+                    log(`🔊 Speaking: "${text}" (${lang})`, 'success');
+                };
+
+                utterance.onerror = (e) => {
+                    log(`Speech error: ${e.error}`, 'error');
+                };
+
+                window.speechSynthesis.speak(utterance);
+            }, 100);
+        }
+
+        // Load voices when they become available
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.onvoiceschanged = () => {
+                const voices = window.speechSynthesis.getVoices();
+                log(`Loaded ${voices.length} speech voices`, 'success');
+            };
+        }
+
+        // Google Translate using Google Translate API (free tier)
+        async function getAmharicTranslation(word) {
+            if (!word) return null;
+
+            try {
+                // Using Google Translate API via a proxy
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=am&dt=t&q=${encodeURIComponent(word)}`;
+
+                const response = await fetch(url);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data[0] && data[0][0] && data[0][0][0]) {
+                        const translation = data[0][0][0];
+                        log(`Google Translate: "${word}" → "${translation}"`, 'success');
+                        return translation;
+                    }
+                }
+            } catch (error) {
+                log(`Translation error: ${error.message}`, 'error');
+            }
+
+            // Fallback to MyMemory API
+            try {
+                const response = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|am`);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.responseStatus === 200 && data.responseData && data.responseData.translatedText) {
+                        log(`MyMemory Translate: "${word}" → "${data.responseData.translatedText}"`, 'success');
+                        return data.responseData.translatedText;
+                    }
+                }
+            } catch (error) {
+                log(`Fallback translation error: ${error.message}`, 'error');
+            }
+
+            return null;
+        }
+
+        // Get enhanced word suggestions
+        function getEnhancedSuggestions(partial) {
+            if (!partial || partial.length === 0) return [];
+
+            const upperPartial = partial.toUpperCase();
+
+            // Find all words that start with the partial
+            const matches = commonWords.filter(word => word.startsWith(upperPartial));
+
+            // Sort by length (prefer shorter completions first)
+            matches.sort((a, b) => a.length - b.length);
+
+            // Return top 10 suggestions
+            return matches.slice(0, 10);
+        }
+
+        async function showWordPopup(word, amharicTranslation = null) {
+            const popup = document.getElementById('wordPopup');
+            const overlay = document.getElementById('popupOverlay');
+            const englishEl = document.getElementById('popupEnglish');
+            const amharicEl = document.getElementById('popupAmharic');
+
+            englishEl.textContent = word.toUpperCase();
+
+            if (showAmharic) {
+                if (!amharicTranslation) {
+                    log('Fetching Amharic translation via Google Translate...', 'info');
+                    amharicTranslation = await getAmharicTranslation(word);
+                }
+
+                if (amharicTranslation) {
+                    amharicEl.textContent = amharicTranslation;
+                    amharicEl.style.display = 'block';
+                    amharicEl.style.fontSize = '2.5em';
+                } else {
+                    amharicEl.textContent = '(Translation unavailable)';
+                    amharicEl.style.display = 'block';
+                    amharicEl.style.fontSize = '1.2em';
+                }
+            } else {
+                amharicEl.style.display = 'none';
+            }
+
+            overlay.classList.add('show');
+            popup.classList.add('show');
+
+            // Speak with improved TTS
+            if (speechEnabled) {
+                speak(word, 'en-US');
+
+                if (showAmharic && amharicTranslation && !amharicTranslation.includes('unavailable')) {
+                    setTimeout(() => {
+                        speak(amharicTranslation, 'am');
+                    }, 1500);
+                }
+            }
+
+            setTimeout(() => {
+                closeWordPopup();
+            }, 4000);
+        }
+
+        function showStatsPopup(stats) {
+            const popup = document.getElementById('statsPopup');
+            const overlay = document.getElementById('popupOverlay');
+
+            document.getElementById('statsFrames').textContent = stats.total_frames || 0;
+            document.getElementById('statsLetters').textContent = stats.letters_recognized || 0;
+            document.getElementById('statsWords').textContent = stats.words_completed || 0;
+            document.getElementById('statsConfidence').textContent = Math.round((stats.average_confidence || 0) * 100) + '%';
+            document.getElementById('statsDuration').textContent = Math.round(stats.session_duration_seconds || 0) + 's';
+            document.getElementById('statsFPS').textContent = stats.fps || 0;
+
+            overlay.classList.add('show');
+            popup.classList.add('show');
+        }
+
+        function closeWordPopup() {
+            document.getElementById('wordPopup').classList.remove('show');
+            document.getElementById('popupOverlay').classList.remove('show');
+        }
+
+        function closeStatsPopup() {
+            document.getElementById('statsPopup').classList.remove('show');
+            document.getElementById('popupOverlay').classList.remove('show');
+        }
+
+        function closeAllPopups() {
+            closeWordPopup();
+            closeStatsPopup();
+        }
+
         function setupToggles() {
             document.getElementById('landmarksToggle').addEventListener('change', function() {
                 showLandmarks = this.checked;
@@ -757,26 +1209,30 @@
                 updateCompletedWordsDisplay();
             });
 
+            document.getElementById('speechToggle').addEventListener('change', function() {
+                speechEnabled = this.checked;
+                log(`Speech output ${speechEnabled ? 'enabled' : 'disabled'}`);
+
+                if (speechEnabled) {
+                    speak('Speech enabled', 'en-US');
+                } else {
+                    window.speechSynthesis.cancel();
+                }
+            });
+
             document.getElementById('suggestionsToggle').addEventListener('change', function() {
                 showSuggestions = this.checked;
                 log(`Word suggestions ${showSuggestions ? 'enabled' : 'disabled'}`);
                 document.getElementById('suggestionsCard').style.display = this.checked ? 'block' : 'none';
             });
 
-            const holdTimeSlider = document.getElementById('holdTimeSlider');
-            const holdTimeValue = document.getElementById('holdTimeValue');
+            const cooldownSlider = document.getElementById('cooldownSlider');
+            const cooldownValue = document.getElementById('cooldownValue');
 
-            holdTimeSlider.addEventListener('input', function() {
-                currentHoldTime = parseFloat(this.value);
-                holdTimeValue.textContent = currentHoldTime.toFixed(1) + 's';
-
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({
-                        type: 'config',
-                        data: { hold_time: currentHoldTime }
-                    }));
-                    log(`Hold time updated to ${currentHoldTime.toFixed(1)}s`, 'success');
-                }
+            cooldownSlider.addEventListener('input', function() {
+                letterCooldown = parseFloat(this.value);
+                cooldownValue.textContent = letterCooldown.toFixed(1) + 's';
+                log(`Letter cooldown updated to ${letterCooldown.toFixed(1)}s`, 'success');
             });
         }
 
@@ -835,44 +1291,94 @@
         }
 
         function handlePrediction(data) {
-            // NEW: Handle "no sign detected" state
             const letterDisplay = document.getElementById('letterDisplay');
             const noSignOverlay = document.getElementById('noSignOverlay');
+
+            // Check if we're in cooldown period
+            const now = Date.now();
+            if (isInCooldown && (now - lastRecognitionTime) < (letterCooldown * 1000)) {
+                // Still in cooldown, don't update letter display
+                return;
+            } else if (isInCooldown) {
+                // Cooldown period ended
+                isInCooldown = false;
+                log(`Cooldown ended, ready for next letter`, 'info');
+            }
 
             if (!data.is_sign_detected) {
                 letterDisplay.textContent = 'No Sign Detected';
                 letterDisplay.className = 'letter-display no-sign';
                 noSignOverlay.classList.add('show');
             } else {
-                letterDisplay.textContent = data.letter || '-';
-                letterDisplay.className = 'letter-display';
-                noSignOverlay.classList.remove('show');
-                lettersRecognizedCount++;
+                const newLetter = data.letter || '-';
+
+                // Check if this is a new letter (prevent duplicate recognition)
+                if (newLetter !== lastRecognizedLetter || !isInCooldown) {
+                    letterDisplay.textContent = newLetter;
+                    letterDisplay.className = 'letter-display';
+                    noSignOverlay.classList.remove('show');
+                    lettersRecognizedCount++;
+
+                    // Start cooldown for this letter
+                    lastRecognizedLetter = newLetter;
+                    lastRecognitionTime = now;
+                    isInCooldown = true;
+
+                    log(`Letter recognized: ${newLetter} (cooldown: ${letterCooldown}s)`, 'success');
+                }
             }
 
-            // Update confidence
             const confidence = Math.round(data.confidence * 100);
             document.getElementById('confidence').textContent = confidence;
             document.getElementById('confidenceBar').style.width = confidence + '%';
 
             // Update current word
-            document.getElementById('currentWord').textContent = data.current_word || '-';
-            document.getElementById('progress').textContent = Math.round(data.letter_progress * 100);
+            currentWordText = data.current_word || '';
+            const wordDisplay = document.getElementById('currentWord');
+            wordDisplay.textContent = currentWordText || '-';
 
-            // Update suggestions (enhanced from server)
-            if (showSuggestions && data.word_suggestions && data.word_suggestions.length > 0) {
-                const suggestionsEl = document.getElementById('suggestions');
-                suggestionsEl.innerHTML = '';
-                data.word_suggestions.forEach(suggestion => {
-                    const suggestionEl = document.createElement('div');
-                    suggestionEl.className = 'suggestion';
-                    suggestionEl.textContent = suggestion.toUpperCase();
-                    suggestionEl.onclick = () => selectSuggestion(suggestion);
-                    suggestionsEl.appendChild(suggestionEl);
-                });
+            // Show/hide accept button
+            const acceptBtn = document.getElementById('acceptWordBtn');
+            if (currentWordText && currentWordText.length > 0) {
+                acceptBtn.style.display = 'block';
+            } else {
+                acceptBtn.style.display = 'none';
             }
 
-            // Track processing time
+            document.getElementById('progress').textContent = Math.round(data.letter_progress * 100);
+
+            // Enhanced suggestions with more words
+            if (showSuggestions && currentWordText && currentWordText.length > 0) {
+                const enhancedSuggestions = getEnhancedSuggestions(currentWordText);
+
+                // Merge with server suggestions
+                const allSuggestions = [...new Set([...enhancedSuggestions, ...(data.word_suggestions || [])])];
+                const newSuggestions = allSuggestions.slice(0, 10);
+
+                const suggestionsChanged = JSON.stringify(newSuggestions) !== JSON.stringify(lastSuggestions);
+
+                if (suggestionsChanged) {
+                    lastSuggestions = newSuggestions;
+                    const suggestionsEl = document.getElementById('suggestions');
+                    suggestionsEl.innerHTML = '';
+
+                    newSuggestions.forEach((suggestion, index) => {
+                        const suggestionEl = document.createElement('div');
+                        suggestionEl.className = 'suggestion';
+                        suggestionEl.textContent = suggestion.toUpperCase();
+                        suggestionEl.style.animationDelay = `${index * 0.05}s`;
+                        suggestionEl.onclick = () => selectSuggestion(suggestion);
+                        suggestionsEl.appendChild(suggestionEl);
+                    });
+                }
+            } else if (currentWordText.length === 0) {
+                const suggestionsEl = document.getElementById('suggestions');
+                if (!suggestionsEl.innerHTML.includes('Start signing')) {
+                    suggestionsEl.innerHTML = '<div style="opacity: 0.5; width: 100%; text-align: center;">Start signing to see suggestions</div>';
+                    lastSuggestions = [];
+                }
+            }
+
             if (data.processing_time_ms) {
                 processingTimes.push(data.processing_time_ms);
                 if (processingTimes.length > 100) {
@@ -880,19 +1386,43 @@
                 }
             }
 
-            // Handle completed words
             if (data.word_completed) {
-                const translation = showAmharic ? data.amharic_translation : null;
-                addCompletedWord(data.word_completed, translation);
-                wordsCompletedCount++;
+                const translation = data.amharic_translation;
+                handleWordCompletion(data.word_completed, translation);
             }
 
-            // Update session stats if provided
             if (data.session_stats) {
                 updateSessionStatsFromServer(data.session_stats);
             }
 
             updateStats(data);
+        }
+
+        async function acceptCurrentWord() {
+            if (!currentWordText || currentWordText.length === 0) {
+                log('No word to accept', 'error');
+                return;
+            }
+
+            log(`Manually accepting word: ${currentWordText}`, 'success');
+
+            const translation = showAmharic ? await getAmharicTranslation(currentWordText) : null;
+            await handleWordCompletion(currentWordText, translation);
+            resetWord();
+        }
+
+        async function handleWordCompletion(word, amharicTranslation = null) {
+            await showWordPopup(word, amharicTranslation);
+            addCompletedWord(word, amharicTranslation);
+            wordsCompletedCount++;
+            updateStats(null);
+
+            document.getElementById('acceptWordBtn').style.display = 'none';
+            currentWordText = '';
+
+            // Reset cooldown
+            isInCooldown = false;
+            lastRecognizedLetter = null;
         }
 
         function updateSessionStatsFromServer(stats) {
@@ -908,13 +1438,8 @@
         }
 
         function displaySessionStats(stats) {
-            log('📊 Session Statistics:', 'success');
-            log(`  Total Frames: ${stats.total_frames}`);
-            log(`  Letters Recognized: ${stats.letters_recognized}`);
-            log(`  Words Completed: ${stats.words_completed}`);
-            log(`  Average Confidence: ${(stats.average_confidence * 100).toFixed(1)}%`);
-            log(`  Session Duration: ${stats.session_duration_seconds}s`);
-            log(`  FPS: ${stats.fps}`);
+            showStatsPopup(stats);
+            log('📊 Session statistics displayed', 'success');
         }
 
         function disconnectWebSocket() {
@@ -985,7 +1510,6 @@
                 landmarkCtx.lineWidth = 2;
                 landmarkCtx.fillStyle = '#FF0000';
 
-                // Draw landmarks
                 for (let i = 0; i < landmarks.length; i++) {
                     const x = landmarks[i].x * landmarkCanvas.width;
                     const y = landmarks[i].y * landmarkCanvas.height;
@@ -995,7 +1519,6 @@
                     landmarkCtx.fill();
                 }
 
-                // Draw connections
                 const connections = [
                     [0, 1], [1, 2], [2, 3], [3, 4],
                     [0, 5], [5, 6], [6, 7], [7, 8],
@@ -1053,6 +1576,10 @@
 
             isRecognizing = true;
             framesSent = 0;
+
+            // Hide "Not Recognizing" overlay
+            document.getElementById('notRecognizingOverlay').classList.remove('show');
+
             log('Recognition started', 'success');
 
             recognitionInterval = setInterval(() => {
@@ -1072,7 +1599,7 @@
                         // Ignore MediaPipe errors
                     }
                 }
-            }, 200); // 5 FPS
+            }, 200);
         }
 
         function stopRecognition() {
@@ -1081,6 +1608,15 @@
                 recognitionInterval = null;
             }
             isRecognizing = false;
+
+            // Show "Not Recognizing" overlay
+            const letterDisplay = document.getElementById('letterDisplay');
+            letterDisplay.textContent = 'Not Recognizing';
+            letterDisplay.className = 'letter-display not-active';
+
+            document.getElementById('noSignOverlay').classList.remove('show');
+            document.getElementById('notRecognizingOverlay').classList.add('show');
+
             log('Recognition stopped', 'error');
         }
 
@@ -1088,6 +1624,12 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'reset' }));
                 log('Reset word command sent', 'success');
+                currentWordText = '';
+                document.getElementById('acceptWordBtn').style.display = 'none';
+
+                // Reset cooldown
+                isInCooldown = false;
+                lastRecognizedLetter = null;
             } else {
                 log('WebSocket not connected', 'error');
             }
@@ -1102,11 +1644,11 @@
             }
         }
 
-        function selectSuggestion(suggestion) {
+        async function selectSuggestion(suggestion) {
             log(`Selected suggestion: ${suggestion}`, 'success');
-            addCompletedWord(suggestion, null);
-            wordsCompletedCount++;
-            updateStats(null);
+
+            const translation = showAmharic ? await getAmharicTranslation(suggestion) : null;
+            await handleWordCompletion(suggestion, translation);
             resetWord();
         }
 
@@ -1121,9 +1663,8 @@
             wordDiv.className = 'completed-word';
 
             let content = `<strong>${word.toUpperCase()}</strong>`;
-            if (amharicTranslation) {
-                const amharicStyle = showAmharic ? 'block' : 'none';
-                content += `<div class="amharic-text" style="display: ${amharicStyle};">${amharicTranslation}</div>`;
+            if (amharicTranslation && showAmharic) {
+                content += `<div class="amharic-text">${amharicTranslation}</div>`;
             }
 
             wordDiv.innerHTML = content;
@@ -1136,11 +1677,16 @@
             log(`Word completed: ${word}${amharicTranslation ? ` (${amharicTranslation})` : ''}`, 'success');
         }
 
-        // Initialize on page load
         document.addEventListener('DOMContentLoaded', function() {
             setupToggles();
-            log('🚀 ASL Recognition Client loaded successfully', 'success');
+            log('🚀 ASL Recognition Client v2.2 loaded successfully', 'success');
+            log('💡 Features: Letter cooldown, Google Translate, Enhanced suggestions, Better TTS');
             log('Click Connect to start using the application');
+
+            // Initialize speech synthesis voices
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.getVoices();
+            }
         });
     </script>
 </body>
