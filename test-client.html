@@ -815,6 +815,7 @@
                 <h3>⚙️ Actions</h3>
                 <button onclick="resetWord()" class="secondary">Reset Word</button>
                 <button onclick="getSessionStats()" class="info">Get Stats</button>
+                <button onclick="testSpeech()" class="warning">🔊 Test Speech</button>
             </div>
         </div>
 
@@ -906,6 +907,28 @@
         <div class="result-card">
             <h3>📋 Console Log</h3>
             <div class="console-log" id="console"></div>
+        </div>
+
+        <!-- Speech Diagnostics -->
+        <div class="result-card" style="background: rgba(255, 68, 68, 0.15); border-color: rgba(255, 68, 68, 0.3);">
+            <h3>⚠️ Speech Not Working? Troubleshooting</h3>
+            <div style="padding: 15px; line-height: 1.8;">
+                <p><strong>If you see "synthesis-failed" errors:</strong></p>
+                <ol style="margin-left: 20px;">
+                    <li><strong>Browser:</strong> Use Google Chrome (best support)</li>
+                    <li><strong>Windows:</strong> Settings → Ease of Access → Narrator → Turn ON</li>
+                    <li><strong>Mac:</strong> System Preferences → Accessibility → Speech → Enable</li>
+                    <li><strong>Try:</strong> Restart browser completely</li>
+                    <li><strong>Alternative:</strong> Disable "Speech Output" toggle (visual mode only)</li>
+                </ol>
+                <p style="margin-top: 15px; opacity: 0.8;">
+                    <strong>Note:</strong> Some systems don't support browser TTS.
+                    The app still works perfectly without speech - you'll see all translations and completions visually.
+                </p>
+                <button onclick="checkSystemSpeech()" class="warning" style="margin-top: 10px; width: auto;">
+                    🔍 Diagnose Speech Issue
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1010,55 +1033,244 @@
             }
         }
 
-        // Enhanced Text-to-Speech with better voice selection
+        // Enhanced Text-to-Speech with better error recovery
         function speak(text, lang = 'en-US') {
             if (!speechEnabled || !text) {
-                log(`Speech disabled or no text to speak`, 'info');
+                log(`Speech skipped: enabled=${speechEnabled}, text="${text}"`, 'info');
                 return;
             }
 
             if (!('speechSynthesis' in window)) {
-                log('Speech synthesis not supported in this browser', 'error');
+                log('❌ Speech synthesis not supported in this browser', 'error');
                 return;
             }
 
-            // Cancel any ongoing speech
-            window.speechSynthesis.cancel();
+            log(`🎤 Attempting to speak: "${text}" in ${lang}`, 'info');
 
-            // Wait a bit for cancel to complete
-            setTimeout(() => {
-                const utterance = new SpeechSynthesisUtterance(text);
-                utterance.lang = lang;
-                utterance.rate = 0.85;
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-
-                // Try to get a good voice for the language
-                const voices = window.speechSynthesis.getVoices();
-                const preferredVoice = voices.find(voice =>
-                    voice.lang.startsWith(lang.substring(0, 2))
-                );
-                if (preferredVoice) {
-                    utterance.voice = preferredVoice;
+            // Cancel any ongoing speech first
+            try {
+                if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+                    log('⚠️ Canceling previous speech', 'info');
+                    window.speechSynthesis.cancel();
                 }
+            } catch (e) {
+                log(`Cancel error: ${e.message}`, 'error');
+            }
 
-                utterance.onstart = () => {
-                    log(`🔊 Speaking: "${text}" (${lang})`, 'success');
-                };
+            // Wait for cancel to complete, then speak
+            setTimeout(() => {
+                try {
+                    const utterance = new SpeechSynthesisUtterance(text);
 
-                utterance.onerror = (e) => {
-                    log(`Speech error: ${e.error}`, 'error');
-                };
+                    // Basic settings - keep it simple to avoid synthesis-failed
+                    utterance.lang = lang;
+                    utterance.rate = 1.0;  // Normal speed
+                    utterance.pitch = 1.0;
+                    utterance.volume = 1.0;
 
-                window.speechSynthesis.speak(utterance);
-            }, 100);
+                    // Don't force specific voice - let browser choose
+                    // This avoids synthesis-failed errors from incompatible voices
+                    const voices = window.speechSynthesis.getVoices();
+
+                    if (voices.length > 0) {
+                        // Try to find a matching voice, but don't fail if not found
+                        const langPrefix = lang.substring(0, 2);
+                        const matchingVoice = voices.find(voice =>
+                            voice.lang.startsWith(langPrefix) && !voice.localService
+                        );
+
+                        if (matchingVoice) {
+                            utterance.voice = matchingVoice;
+                            log(`✅ Using voice: ${matchingVoice.name} (${matchingVoice.lang})`, 'success');
+                        } else {
+                            // Try local voice
+                            const localVoice = voices.find(voice =>
+                                voice.lang.startsWith(langPrefix)
+                            );
+                            if (localVoice) {
+                                utterance.voice = localVoice;
+                                log(`✅ Using local voice: ${localVoice.name}`, 'success');
+                            } else {
+                                log(`⚠️ No ${lang} voice, using default`, 'info');
+                            }
+                        }
+                    }
+
+                    let speechStarted = false;
+
+                    utterance.onstart = () => {
+                        speechStarted = true;
+                        log(`🔊 NOW SPEAKING: "${text}" (${lang})`, 'success');
+                    };
+
+                    utterance.onend = () => {
+                        log(`✅ Speech finished: "${text}"`, 'success');
+                    };
+
+                    utterance.onerror = (e) => {
+                        log(`❌ SPEECH ERROR: ${e.error}`, 'error');
+
+                        // Handle specific errors
+                        if (e.error === 'synthesis-failed' && !speechStarted) {
+                            log('⚠️ Synthesis failed - trying with default voice...', 'info');
+
+                            // Retry with absolutely minimal settings
+                            setTimeout(() => {
+                                const retryUtterance = new SpeechSynthesisUtterance(text);
+                                retryUtterance.lang = lang;
+                                // No voice selection - let browser use absolute default
+
+                                retryUtterance.onstart = () => {
+                                    log(`🔊 Retry successful: "${text}"`, 'success');
+                                };
+
+                                retryUtterance.onerror = (retryError) => {
+                                    log(`❌ Retry also failed: ${retryError.error}`, 'error');
+                                    if (lang !== 'en-US') {
+                                        log('💡 TIP: Amharic speech may not be available on this system', 'info');
+                                    }
+                                };
+
+                                window.speechSynthesis.speak(retryUtterance);
+                            }, 500);
+
+                        } else if (e.error === 'not-allowed') {
+                            log('❌ Speech blocked by browser. Please interact with the page first.', 'error');
+                        } else if (e.error === 'interrupted') {
+                            log('⚠️ Speech was interrupted (this is normal)', 'info');
+                        } else {
+                            log(`❌ Error details: ${e.error} - ${e.message || 'No details'}`, 'error');
+                        }
+                    };
+
+                    // Queue the speech
+                    window.speechSynthesis.speak(utterance);
+                    log(`✅ Speech utterance queued`, 'success');
+
+                } catch (error) {
+                    log(`❌ Speech exception: ${error.message}`, 'error');
+                    console.error('Full error:', error);
+                }
+            }, 200);
+        }
+
+        // Test speech function with detailed diagnostics
+        function testSpeech() {
+            log('=== TESTING SPEECH SYNTHESIS ===', 'info');
+
+            if (!('speechSynthesis' in window)) {
+                alert('❌ Speech synthesis not supported in your browser.\n\nPlease use:\n- Chrome\n- Edge\n- Safari\n\nFirefox has limited support.');
+                return;
+            }
+
+            // Check if synthesis is working at all
+            log(`Speech speaking: ${window.speechSynthesis.speaking}`, 'info');
+            log(`Speech pending: ${window.speechSynthesis.pending}`, 'info');
+            log(`Speech paused: ${window.speechSynthesis.paused}`, 'info');
+
+            // Get voices
+            const voices = window.speechSynthesis.getVoices();
+            log(`Total voices available: ${voices.length}`, 'info');
+
+            if (voices.length === 0) {
+                alert('⚠️ No voices loaded yet.\n\nTrying to load voices...\n\nPlease click "Test Speech" again in 1 second.');
+
+                // Force voice loading
+                window.speechSynthesis.getVoices();
+                return;
+            }
+
+            // List all voices with details
+            log('=== Available Voices ===', 'info');
+            voices.forEach((voice, i) => {
+                log(`${i + 1}. ${voice.name} (${voice.lang}) ${voice.localService ? '[Local]' : '[Cloud]'} ${voice.default ? '[Default]' : ''}`, 'info');
+            });
+
+            // Find English and Amharic voices
+            const enVoices = voices.filter(v => v.lang.startsWith('en'));
+            const amVoices = voices.filter(v => v.lang.startsWith('am'));
+
+            log(`English voices: ${enVoices.length}`, enVoices.length > 0 ? 'success' : 'error');
+            log(`Amharic voices: ${amVoices.length}`, amVoices.length > 0 ? 'success' : 'error');
+
+            if (!speechEnabled) {
+                alert('⚠️ Speech Output is currently DISABLED.\n\nPlease enable the "Speech Output" toggle and try again.');
+                return;
+            }
+
+            // Test with absolutely minimal settings
+            log('=== Testing Basic Speech ===', 'info');
+
+            try {
+                // Cancel everything first
+                window.speechSynthesis.cancel();
+
+                setTimeout(() => {
+                    const utterance = new SpeechSynthesisUtterance('Testing');
+
+                    utterance.onstart = () => {
+                        log('✅ ✅ ✅ SPEECH STARTED! Audio is working!', 'success');
+                    };
+
+                    utterance.onend = () => {
+                        log('✅ Speech completed successfully', 'success');
+                    };
+
+                    utterance.onerror = (e) => {
+                        log(`❌ Test failed: ${e.error}`, 'error');
+
+                        if (e.error === 'synthesis-failed') {
+                            log('⚠️ synthesis-failed means:', 'error');
+                            log('  1. Your browser/OS may not support TTS', 'error');
+                            log('  2. System speech services may be disabled', 'error');
+                            log('  3. Try: Settings → Ease of Access → Narrator (Windows)', 'error');
+                            log('  4. Try: System Preferences → Accessibility → Speech (Mac)', 'error');
+                            log('  5. Try a different browser (Chrome recommended)', 'error');
+
+                            alert('❌ Speech synthesis is failing on your system.\n\nPossible fixes:\n\n1. Try Google Chrome (if not already)\n2. Check Windows: Settings → Ease of Access → Narrator\n3. Check Mac: System Preferences → Accessibility → Speech\n4. Restart your browser\n5. Restart your computer\n\nNote: Some systems don\'t support browser TTS.');
+                        }
+                    };
+
+                    log('Queuing test speech...', 'info');
+                    window.speechSynthesis.speak(utterance);
+
+                }, 500);
+
+            } catch (error) {
+                log(`❌ Exception during test: ${error.message}`, 'error');
+                console.error('Full error:', error);
+            }
         }
 
         // Load voices when they become available
         if ('speechSynthesis' in window) {
+            // Force initial load
+            window.speechSynthesis.getVoices();
+
+            // Listen for voices changed event
             window.speechSynthesis.onvoiceschanged = () => {
                 const voices = window.speechSynthesis.getVoices();
-                log(`Loaded ${voices.length} speech voices`, 'success');
+                log(`🎤 Speech voices loaded: ${voices.length}`, 'success');
+
+                // List available languages
+                const langs = [...new Set(voices.map(v => v.lang.substring(0, 2)))];
+                log(`Available languages: ${langs.join(', ')}`, 'info');
+
+                // Check for required languages
+                const hasEnglish = voices.some(v => v.lang.startsWith('en'));
+                const hasAmharic = voices.some(v => v.lang.startsWith('am'));
+
+                if (hasEnglish) {
+                    log('✅ English voices available', 'success');
+                } else {
+                    log('⚠️ No English voices found', 'error');
+                }
+
+                if (hasAmharic) {
+                    log('✅ Amharic voices available', 'success');
+                } else {
+                    log('⚠️ No Amharic voices found (translation will still work)', 'error');
+                }
             };
         }
 
@@ -1124,8 +1336,14 @@
             const englishEl = document.getElementById('popupEnglish');
             const amharicEl = document.getElementById('popupAmharic');
 
-            englishEl.textContent = word.toUpperCase();
+            // Display word in title case (not all caps)
+            const displayWord = word.toLowerCase().split('').map((char, i) =>
+                i === 0 ? char.toUpperCase() : char
+            ).join('');
 
+            englishEl.textContent = displayWord;
+
+            // Handle Amharic translation
             if (showAmharic) {
                 if (!amharicTranslation) {
                     log('Fetching Amharic translation via Google Translate...', 'info');
@@ -1148,20 +1366,29 @@
             overlay.classList.add('show');
             popup.classList.add('show');
 
-            // Speak with improved TTS
+            // Speak with improved TTS (use lowercase word for better pronunciation)
             if (speechEnabled) {
-                speak(word, 'en-US');
+                log('Starting speech output...', 'info');
 
+                // Speak English word - wait a bit for popup to show
+                setTimeout(() => {
+                    speak(word.toLowerCase(), 'en-US');
+                }, 300);
+
+                // Speak Amharic translation after longer delay
                 if (showAmharic && amharicTranslation && !amharicTranslation.includes('unavailable')) {
                     setTimeout(() => {
+                        log('Starting Amharic speech...', 'info');
                         speak(amharicTranslation, 'am');
-                    }, 1500);
+                    }, 3000); // 3 second delay - more time for English to finish
                 }
+            } else {
+                log('Speech is disabled by toggle', 'info');
             }
 
             setTimeout(() => {
                 closeWordPopup();
-            }, 4000);
+            }, 5000); // Longer popup duration (5s) to accommodate speech
         }
 
         function showStatsPopup(stats) {
@@ -1499,9 +1726,13 @@
         }
 
         function onHandResults(results) {
-            if (!showLandmarks || !landmarkCtx) return;
+            if (!landmarkCtx) return;
 
+            // Always clear canvas first
             landmarkCtx.clearRect(0, 0, landmarkCanvas.width, landmarkCanvas.height);
+
+            // Only draw if enabled
+            if (!showLandmarks) return;
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
@@ -1510,6 +1741,7 @@
                 landmarkCtx.lineWidth = 2;
                 landmarkCtx.fillStyle = '#FF0000';
 
+                // Draw landmark points
                 for (let i = 0; i < landmarks.length; i++) {
                     const x = landmarks[i].x * landmarkCanvas.width;
                     const y = landmarks[i].y * landmarkCanvas.height;
@@ -1519,6 +1751,7 @@
                     landmarkCtx.fill();
                 }
 
+                // Draw connections
                 const connections = [
                     [0, 1], [1, 2], [2, 3], [3, 4],
                     [0, 5], [5, 6], [6, 7], [7, 8],
@@ -1662,7 +1895,12 @@
             const wordDiv = document.createElement('div');
             wordDiv.className = 'completed-word';
 
-            let content = `<strong>${word.toUpperCase()}</strong>`;
+            // Display word in title case
+            const displayWord = word.toLowerCase().split('').map((char, i) =>
+                i === 0 ? char.toUpperCase() : char
+            ).join('');
+
+            let content = `<strong>${displayWord}</strong>`;
             if (amharicTranslation && showAmharic) {
                 content += `<div class="amharic-text">${amharicTranslation}</div>`;
             }
@@ -1674,7 +1912,7 @@
                 completedDiv.removeChild(completedDiv.lastChild);
             }
 
-            log(`Word completed: ${word}${amharicTranslation ? ` (${amharicTranslation})` : ''}`, 'success');
+            log(`Word completed: ${displayWord}${amharicTranslation ? ` (${amharicTranslation})` : ''}`, 'success');
         }
 
         document.addEventListener('DOMContentLoaded', function() {
@@ -1683,9 +1921,34 @@
             log('💡 Features: Letter cooldown, Google Translate, Enhanced suggestions, Better TTS');
             log('Click Connect to start using the application');
 
-            // Initialize speech synthesis voices
+            // Initialize speech synthesis
             if ('speechSynthesis' in window) {
-                window.speechSynthesis.getVoices();
+                log('🎤 Speech synthesis is supported', 'success');
+
+                // Force initial voice load
+                const initialVoices = window.speechSynthesis.getVoices();
+
+                if (initialVoices.length > 0) {
+                    log(`✅ ${initialVoices.length} voices loaded immediately`, 'success');
+                } else {
+                    log('⏳ Waiting for voices to load...', 'info');
+
+                    // Wait for voices to load
+                    setTimeout(() => {
+                        const voices = window.speechSynthesis.getVoices();
+                        if (voices.length > 0) {
+                            log(`✅ ${voices.length} voices loaded`, 'success');
+                        } else {
+                            log('⚠️ No voices loaded. Click "Test Speech" button to diagnose.', 'error');
+                        }
+                    }, 1000);
+                }
+
+                // Add a helpful message
+                log('💡 TIP: Click the "🔊 Test Speech" button to test audio output', 'info');
+            } else {
+                log('❌ Speech synthesis NOT supported in this browser', 'error');
+                alert('⚠️ Speech synthesis is not supported in your browser.\n\nFor full features, please use:\n• Google Chrome\n• Microsoft Edge\n• Safari');
             }
         });
     </script>
