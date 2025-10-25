@@ -1168,78 +1168,114 @@
             log(`Speech pending: ${window.speechSynthesis.pending}`, 'info');
             log(`Speech paused: ${window.speechSynthesis.paused}`, 'info');
 
-            // Get voices
-            const voices = window.speechSynthesis.getVoices();
-            log(`Total voices available: ${voices.length}`, 'info');
+            // Force voice loading with multiple attempts
+            log('Force loading voices...', 'info');
+            window.speechSynthesis.cancel();
 
-            if (voices.length === 0) {
-                alert('⚠️ No voices loaded yet.\n\nTrying to load voices...\n\nPlease click "Test Speech" again in 1 second.');
+            // Multiple attempts to load voices
+            let attempts = 0;
+            const maxAttempts = 5;
 
-                // Force voice loading
-                window.speechSynthesis.getVoices();
-                return;
+            function tryLoadVoices() {
+                attempts++;
+                const voices = window.speechSynthesis.getVoices();
+
+                if (voices.length > 0) {
+                    log(`✅ ${voices.length} voices loaded successfully!`, 'success');
+                    proceedWithTest(voices);
+                } else if (attempts < maxAttempts) {
+                    log(`Attempt ${attempts}/${maxAttempts}: No voices yet, retrying...`, 'info');
+                    setTimeout(tryLoadVoices, 200);
+                } else {
+                    log('❌ Failed to load voices after multiple attempts', 'error');
+                    alert('❌ Cannot load speech voices.\n\nYour browser may not support TTS.\n\nTry:\n1. Restart browser\n2. Use Google Chrome\n3. Enable system TTS\n\nOr use visual mode (disable Speech Output).');
+                }
             }
 
-            // List all voices with details
-            log('=== Available Voices ===', 'info');
-            voices.forEach((voice, i) => {
-                log(`${i + 1}. ${voice.name} (${voice.lang}) ${voice.localService ? '[Local]' : '[Cloud]'} ${voice.default ? '[Default]' : ''}`, 'info');
-            });
+            function proceedWithTest(voices) {
+                // List all voices with details
+                log('=== Available Voices ===', 'info');
+                voices.forEach((voice, i) => {
+                    log(`${i + 1}. ${voice.name} (${voice.lang}) ${voice.localService ? '[Local]' : '[Cloud]'} ${voice.default ? '[Default]' : ''}`, 'info');
+                });
 
-            // Find English and Amharic voices
-            const enVoices = voices.filter(v => v.lang.startsWith('en'));
-            const amVoices = voices.filter(v => v.lang.startsWith('am'));
+                // Find English and Amharic voices
+                const enVoices = voices.filter(v => v.lang.startsWith('en'));
+                const amVoices = voices.filter(v => v.lang.startsWith('am'));
 
-            log(`English voices: ${enVoices.length}`, enVoices.length > 0 ? 'success' : 'error');
-            log(`Amharic voices: ${amVoices.length}`, amVoices.length > 0 ? 'success' : 'error');
+                log(`English voices: ${enVoices.length}`, enVoices.length > 0 ? 'success' : 'error');
+                log(`Amharic voices: ${amVoices.length}`, amVoices.length > 0 ? 'success' : 'error');
 
-            if (!speechEnabled) {
-                alert('⚠️ Speech Output is currently DISABLED.\n\nPlease enable the "Speech Output" toggle and try again.');
-                return;
-            }
+                if (amVoices.length === 0) {
+                    log('⚠️ NO AMHARIC VOICES AVAILABLE', 'error');
+                    log('Your system does not have Amharic TTS installed.', 'error');
+                    log('Amharic will show visually but cannot be spoken.', 'error');
+                    alert('⚠️ AMHARIC SPEECH NOT AVAILABLE\n\nYour system does not have Amharic text-to-speech voices.\n\nEnglish: ✅ Will work\nAmharic: ❌ Visual only (no audio)\n\nThis is normal on most systems.');
+                }
 
-            // Test with absolutely minimal settings
-            log('=== Testing Basic Speech ===', 'info');
+                if (!speechEnabled) {
+                    alert('⚠️ Speech Output is currently DISABLED.\n\nPlease enable the "Speech Output" toggle and try again.');
+                    return;
+                }
 
-            try {
+                // Test with absolutely minimal settings
+                log('=== Testing English Speech ===', 'info');
+
                 // Cancel everything first
                 window.speechSynthesis.cancel();
 
                 setTimeout(() => {
-                    const utterance = new SpeechSynthesisUtterance('Testing');
+                    const utterance = new SpeechSynthesisUtterance('Hello, this is a test');
+                    utterance.lang = 'en-US';
 
                     utterance.onstart = () => {
-                        log('✅ ✅ ✅ SPEECH STARTED! Audio is working!', 'success');
+                        log('✅ ✅ ✅ ENGLISH SPEECH WORKING!', 'success');
                     };
 
                     utterance.onend = () => {
-                        log('✅ Speech completed successfully', 'success');
-                    };
+                        log('✅ English test completed', 'success');
 
-                    utterance.onerror = (e) => {
-                        log(`❌ Test failed: ${e.error}`, 'error');
+                        // Test Amharic if available
+                        if (amVoices.length > 0) {
+                            setTimeout(() => {
+                                log('=== Testing Amharic Speech ===', 'info');
+                                const amUtterance = new SpeechSynthesisUtterance('ሰላም');
+                                amUtterance.lang = 'am';
+                                amUtterance.voice = amVoices[0]; // Use first Amharic voice
 
-                        if (e.error === 'synthesis-failed') {
-                            log('⚠️ synthesis-failed means:', 'error');
-                            log('  1. Your browser/OS may not support TTS', 'error');
-                            log('  2. System speech services may be disabled', 'error');
-                            log('  3. Try: Settings → Ease of Access → Narrator (Windows)', 'error');
-                            log('  4. Try: System Preferences → Accessibility → Speech (Mac)', 'error');
-                            log('  5. Try a different browser (Chrome recommended)', 'error');
+                                amUtterance.onstart = () => {
+                                    log('✅ ✅ ✅ AMHARIC SPEECH WORKING!', 'success');
+                                };
 
-                            alert('❌ Speech synthesis is failing on your system.\n\nPossible fixes:\n\n1. Try Google Chrome (if not already)\n2. Check Windows: Settings → Ease of Access → Narrator\n3. Check Mac: System Preferences → Accessibility → Speech\n4. Restart your browser\n5. Restart your computer\n\nNote: Some systems don\'t support browser TTS.');
+                                amUtterance.onend = () => {
+                                    log('✅ Amharic test completed', 'success');
+                                    alert('✅ SUCCESS!\n\nBoth English and Amharic speech are working!\n\nYou should have heard:\n1. "Hello, this is a test"\n2. "ሰላም"');
+                                };
+
+                                amUtterance.onerror = (e) => {
+                                    log(`❌ Amharic test failed: ${e.error}`, 'error');
+                                    alert('⚠️ English works, but Amharic failed.\n\nAmharic will display visually but without audio.\n\nThis is normal - most systems lack Amharic TTS.');
+                                };
+
+                                window.speechSynthesis.speak(amUtterance);
+                            }, 2000);
+                        } else {
+                            alert('✅ English speech works!\n\n⚠️ Amharic not available (no voices installed).\n\nAmharic will display visually without audio.');
                         }
                     };
 
-                    log('Queuing test speech...', 'info');
+                    utterance.onerror = (e) => {
+                        log(`❌ English test failed: ${e.error}`, 'error');
+                        alert(`❌ Speech test failed: ${e.error}\n\nPlease:\n1. Try Chrome browser\n2. Enable system TTS\n3. Or use visual mode (disable Speech Output toggle)`);
+                    };
+
                     window.speechSynthesis.speak(utterance);
 
                 }, 500);
-
-            } catch (error) {
-                log(`❌ Exception during test: ${error.message}`, 'error');
-                console.error('Full error:', error);
             }
+
+            // Start loading voices
+            tryLoadVoices();
         }
 
         // Load voices when they become available
@@ -1913,6 +1949,151 @@
             }
 
             log(`Word completed: ${displayWord}${amharicTranslation ? ` (${amharicTranslation})` : ''}`, 'success');
+        }
+
+        // Comprehensive system speech diagnosis
+        function checkSystemSpeech() {
+            log('=== COMPREHENSIVE SPEECH DIAGNOSIS ===', 'info');
+
+            // 1. Check API support
+            if (!('speechSynthesis' in window)) {
+                alert('❌ DIAGNOSIS: Speech Synthesis API not found in browser.\n\nSOLUTION: Use Google Chrome, Microsoft Edge, or Safari.');
+                log('❌ speechSynthesis API: NOT AVAILABLE', 'error');
+                return;
+            }
+            log('✅ speechSynthesis API: Available', 'success');
+
+            // 2. Check voices
+            const voices = window.speechSynthesis.getVoices();
+            log(`✅ Voices loaded: ${voices.length}`, voices.length > 0 ? 'success' : 'error');
+
+            if (voices.length === 0) {
+                log('⚠️ No voices available - waiting...', 'error');
+                alert('⚠️ DIAGNOSIS: No voices loaded yet.\n\nACTION: Wait 2 seconds and click this button again.\n\nIf still fails: Restart browser.');
+                return;
+            }
+
+            // 3. Check browser info
+            const browserInfo = navigator.userAgent;
+            log(`Browser: ${browserInfo}`, 'info');
+
+            const isChrome = browserInfo.includes('Chrome');
+            const isEdge = browserInfo.includes('Edg');
+            const isSafari = browserInfo.includes('Safari') && !isChrome;
+            const isFirefox = browserInfo.includes('Firefox');
+
+            if (isChrome || isEdge) {
+                log('✅ Browser: Chrome/Edge (Best for TTS)', 'success');
+            } else if (isSafari) {
+                log('⚠️ Browser: Safari (Limited TTS support)', 'error');
+            } else if (isFirefox) {
+                log('⚠️ Browser: Firefox (Poor TTS support)', 'error');
+            } else {
+                log('⚠️ Browser: Unknown (May not support TTS)', 'error');
+            }
+
+            // 4. Check OS
+            const isWindows = browserInfo.includes('Windows');
+            const isMac = browserInfo.includes('Mac');
+            const isLinux = browserInfo.includes('Linux');
+
+            if (isWindows) {
+                log('OS: Windows', 'info');
+                log('💡 TIP: Check Settings → Ease of Access → Narrator', 'info');
+            } else if (isMac) {
+                log('OS: macOS', 'info');
+                log('💡 TIP: Check System Preferences → Accessibility → Speech', 'info');
+            } else if (isLinux) {
+                log('OS: Linux', 'info');
+                log('⚠️ Linux TTS support varies by distribution', 'error');
+            }
+
+            // 5. Check synthesis state
+            log(`Speaking: ${window.speechSynthesis.speaking}`, 'info');
+            log(`Pending: ${window.speechSynthesis.pending}`, 'info');
+            log(`Paused: ${window.speechSynthesis.paused}`, 'info');
+
+            // 6. List default voice
+            const defaultVoice = voices.find(v => v.default);
+            if (defaultVoice) {
+                log(`Default voice: ${defaultVoice.name} (${defaultVoice.lang})`, 'success');
+            } else {
+                log('⚠️ No default voice set', 'error');
+            }
+
+            // 7. Try absolute minimal test
+            log('=== ATTEMPTING MINIMAL TEST ===', 'info');
+            alert('Now testing speech with minimal settings.\n\nWatch the console and LISTEN for sound.\n\nIf you hear nothing, your system does not support browser TTS.');
+
+            window.speechSynthesis.cancel();
+
+            setTimeout(() => {
+                try {
+                    const test = new SpeechSynthesisUtterance('test');
+
+                    let started = false;
+                    let ended = false;
+
+                    test.onstart = () => {
+                        started = true;
+                        log('✅✅✅ SPEECH STARTED! YOU SHOULD HEAR "TEST" NOW!', 'success');
+                    };
+
+                    test.onend = () => {
+                        ended = true;
+                        log('✅ Speech ended normally', 'success');
+                        if (started) {
+                            alert('✅ SUCCESS!\n\nSpeech is working on your system.\n\nIf you heard "test", then TTS works.\n\nThe issue may be with longer words or specific voices.');
+                        }
+                    };
+
+                    test.onerror = (e) => {
+                        log(`❌ FAILED: ${e.error}`, 'error');
+
+                        let message = '❌ DIAGNOSIS COMPLETE:\n\n';
+                        message += `Error: ${e.error}\n\n`;
+
+                        if (e.error === 'synthesis-failed') {
+                            message += 'CAUSE: Your system does not support browser Text-to-Speech.\n\n';
+                            message += 'SOLUTIONS:\n';
+                            message += '1. Try Google Chrome (if not already)\n';
+                            message += '2. Enable system TTS:\n';
+                            message += '   - Windows: Settings → Ease of Access → Narrator\n';
+                            message += '   - Mac: System Preferences → Accessibility → Speech\n';
+                            message += '3. Restart your computer\n';
+                            message += '4. Use the app without speech (visual mode)\n\n';
+                            message += 'NOTE: Speech is optional. The app works perfectly without it!';
+                        } else if (e.error === 'not-allowed') {
+                            message += 'CAUSE: Browser blocked speech (security policy)\n\n';
+                            message += 'SOLUTIONS:\n';
+                            message += '1. Click anywhere on the page first\n';
+                            message += '2. Check site permissions (padlock icon)\n';
+                            message += '3. Disable content blockers\n';
+                            message += '4. Try incognito/private mode';
+                        } else {
+                            message += 'CAUSE: Unknown browser/system issue\n\n';
+                            message += 'RECOMMENDATION: Disable "Speech Output" toggle and use visual mode only.';
+                        }
+
+                        alert(message);
+                    };
+
+                    // Set timeout to detect if nothing happens
+                    setTimeout(() => {
+                        if (!started && !ended) {
+                            log('❌ Speech neither started nor failed - system may not support TTS', 'error');
+                            alert('❌ DIAGNOSIS: Speech did not start.\n\nYour system likely does not support browser TTS.\n\nRECOMMENDATION: Disable "Speech Output" toggle.\n\nThe app will work perfectly in visual mode.');
+                        }
+                    }, 3000);
+
+                    log('Attempting to speak "test"...', 'info');
+                    window.speechSynthesis.speak(test);
+
+                } catch (error) {
+                    log(`❌ Exception: ${error.message}`, 'error');
+                    alert(`❌ ERROR: ${error.message}\n\nYour browser or system does not support TTS.\n\nPlease use visual mode (disable Speech Output toggle).`);
+                }
+            }, 500);
         }
 
         document.addEventListener('DOMContentLoaded', function() {
